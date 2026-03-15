@@ -11,7 +11,7 @@ import {
   HourlySample,
   HEPMeterRecord,
 } from "@/lib/types";
-import { loadConfig, saveConfig, resetConfig, HEP_API_BASE, FUSION_SOLAR_API } from "@/lib/config";
+import { loadConfig, saveConfig, resetConfig, resolveTariff, HEP_API_BASE, FUSION_SOLAR_API } from "@/lib/config";
 import {
   processHEPRecords,
   parseFusionSolarResponse,
@@ -43,6 +43,7 @@ import RoiCalculator from "@/components/RoiCalculator";
 import YearlyOverview from "@/components/YearlyOverview";
 import ProductionForecast from "@/components/ProductionForecast";
 import Settings from "@/components/Settings";
+import Donate from "@/components/Donate";
 
 type TabId = "dash" | "yearly" | "energy" | "hourly" | "optimize" | "roi" | "bill" | "table" | "settings";
 
@@ -432,14 +433,17 @@ export default function Home() {
   const derived = hasData
     ? calculateDerivedMetrics(sortedDays, dailyDataRef.current, fusionSolarRef.current, hasFusionSolar)
     : null;
+  /* Resolve tariff prices for the selected month */
+  const monthKey = toMonthPrefix(selectedMonth);
+  const activeTariff = resolveTariff(config, monthKey);
   const bill = hasData && hasConsumption
-    ? calculateBill(sortedDays, dailyDataRef.current, config)
+    ? calculateBill(sortedDays, dailyDataRef.current, activeTariff)
     : null;
   const billWithoutSolar = hasData && hasConsumption
-    ? calculateBillWithoutSolar(sortedDays, dailyDataRef.current, config)
+    ? calculateBillWithoutSolar(sortedDays, dailyDataRef.current, activeTariff)
     : null;
   const loadShiftAnalysis = hasData && hasConsumption
-    ? analyzeLoadShifting(sortedDays, hourlyDataRef.current, config)
+    ? analyzeLoadShifting(sortedDays, hourlyDataRef.current, activeTariff)
     : null;
 
   const forecast = hasData && derived
@@ -501,7 +505,7 @@ export default function Home() {
   );
 
   const billContent = hasData && hasConsumption && bill ? (
-    <BillPanel sortedDays={sortedDays} dailyData={dailyDataRef.current} bill={bill} billWithoutSolar={billWithoutSolar!} config={config} />
+    <BillPanel sortedDays={sortedDays} dailyData={dailyDataRef.current} bill={bill} billWithoutSolar={billWithoutSolar!} tariff={activeTariff} />
   ) : (
     <div className={sectionBox}>
       <h3 className={sectionHeading}>Procjena računa</h3>
@@ -521,6 +525,7 @@ export default function Home() {
   return (
     <div className="relative z-1 w-full max-w-[1100px] flex flex-col gap-4 px-4 pt-6 pb-16 sm:px-6 md:px-10 md:gap-6 md:pt-10 md:pb-20">
       <Header meter={config.meter} />
+      <Donate />
       <TabNav activeTab={activeTab} onTabChange={setActiveTab} />
 
       <div className={activeTab === "settings" ? "block" : "hidden"}>

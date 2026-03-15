@@ -76,15 +76,9 @@ export interface BillBreakdown {
   totalFeedInKwh: number;
 }
 
-/** User configuration for API credentials and tariff settings */
-export interface Config {
-  token: string;
-  meter: string;
+/** All tariff/price fields that can vary by date period */
+export interface TariffPrices {
   tariffModel: "single" | "dual";
-  fusionSolarCookie: string;
-  fusionSolarStation: string;
-  /** FusionSolar portal subdomain (e.g. "uni004eu5") */
-  fusionSolarSubdomain: string;
   /** Single tariff energy price (€/kWh) */
   energyPriceSingleTariff: number;
   /** High tariff energy price (€/kWh) */
@@ -115,6 +109,24 @@ export interface Config {
   renewableEnergyRate: number;
   /** VAT rate (e.g., 0.13 = 13%) */
   vatRate: number;
+}
+
+/** A tariff period with a start date — prices apply from this date until the next period */
+export interface TariffPeriod extends TariffPrices {
+  /** Start date in ISO format (YYYY-MM-DD). Prices apply from this date forward. */
+  validFrom: string;
+  /** Optional label for display (e.g. "HEPI Plavi 2025") */
+  label: string;
+}
+
+/** User configuration for API credentials and tariff settings */
+export interface Config extends TariffPrices {
+  token: string;
+  meter: string;
+  fusionSolarCookie: string;
+  fusionSolarStation: string;
+  /** FusionSolar portal subdomain (e.g. "uni004eu5") */
+  fusionSolarSubdomain: string;
   /** Total solar system cost including installation (€) */
   systemCostEur: number;
   /** Installation date in ISO format (YYYY-MM-DD) */
@@ -123,6 +135,8 @@ export interface Config {
   latitude: number;
   /** Location longitude for weather forecast (default: Zagreb area) */
   longitude: number;
+  /** Historical tariff periods — sorted by validFrom ascending */
+  tariffHistory: TariffPeriod[];
 }
 
 /** Session-only credentials — never persisted to localStorage */

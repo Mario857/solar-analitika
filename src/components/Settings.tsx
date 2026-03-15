@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Config, SessionCredentials } from "@/lib/types";
+import { Config, SessionCredentials, TariffPeriod } from "@/lib/types";
+import { DEFAULTS } from "@/lib/config";
 
 interface SettingsProps {
   config: Config;
@@ -39,6 +40,41 @@ export default function Settings({ config, credentials, onSave, onReset, onCrede
     onReset();
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), SAVE_FEEDBACK_DURATION_MS);
+  };
+
+  const updatePeriodField = <K extends keyof TariffPeriod>(index: number, key: K, value: TariffPeriod[K]) => {
+    setLocalConfig((prev) => {
+      const updated = [...prev.tariffHistory];
+      updated[index] = { ...updated[index], [key]: value };
+      return { ...prev, tariffHistory: updated };
+    });
+  };
+
+  const handleAddPeriod = () => {
+    const newPeriod: TariffPeriod = {
+      validFrom: new Date().toISOString().slice(0, 10),
+      label: "",
+      tariffModel: localConfig.tariffModel,
+      energyPriceSingleTariff: DEFAULTS.energyPriceSingleTariff,
+      energyPriceHighTariff: DEFAULTS.energyPriceHighTariff,
+      energyPriceLowTariff: DEFAULTS.energyPriceLowTariff,
+      supplyFee: DEFAULTS.supplyFee,
+      distributionSingleTariff: DEFAULTS.distributionSingleTariff,
+      distributionHighTariff: DEFAULTS.distributionHighTariff,
+      distributionLowTariff: DEFAULTS.distributionLowTariff,
+      transmissionSingleTariff: DEFAULTS.transmissionSingleTariff,
+      transmissionHighTariff: DEFAULTS.transmissionHighTariff,
+      transmissionLowTariff: DEFAULTS.transmissionLowTariff,
+      meteringFee: DEFAULTS.meteringFee,
+      solidarityRate: DEFAULTS.solidarityRate,
+      solidarityDiscount: DEFAULTS.solidarityDiscount,
+      renewableEnergyRate: DEFAULTS.renewableEnergyRate,
+      vatRate: DEFAULTS.vatRate,
+    };
+    setLocalConfig((prev) => ({
+      ...prev,
+      tariffHistory: [...prev.tariffHistory, newPeriod].sort((a, b) => a.validFrom.localeCompare(b.validFrom)),
+    }));
   };
 
   const isSingleTariff = localConfig.tariffModel === "single";
@@ -268,6 +304,121 @@ export default function Settings({ config, credentials, onSave, onReset, onCrede
       <div className={sectionBox}>
         <h3 className={sectionHeading}>Mreža i naknade (bez PDV-a)</h3>
         {networkFields}
+      </div>
+
+      <div className={sectionBox}>
+        <h3 className={sectionHeading}>Povijest cijena</h3>
+        <p className="font-mono text-[0.6rem] text-text-dim leading-normal mb-4">
+          Dodajte periode s različitim cijenama. Zadnje cijene iznad se koriste za mjesece bez definiranog perioda.
+        </p>
+
+        {localConfig.tariffHistory.map((period, index) => (
+          <details key={index} className="mb-3 border border-border rounded-sm">
+            <summary className="flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-surface-2">
+              <span className="font-mono text-xs text-text">
+                {period.label || `Period ${index + 1}`} — od {period.validFrom}
+              </span>
+              <button
+                className="font-mono text-xs text-red hover:text-red/70 px-2"
+                onClick={(e) => {
+                  e.preventDefault();
+                  const updated = localConfig.tariffHistory.filter((_, i) => i !== index);
+                  setLocalConfig((prev) => ({ ...prev, tariffHistory: updated }));
+                }}
+              >
+                Obriši
+              </button>
+            </summary>
+            <div className="p-3 border-t border-border">
+              <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4">
+                <div className={fieldGroup}>
+                  <label className={labelClasses}>Naziv</label>
+                  <input className={inputClasses} type="text" value={period.label} onChange={(e) => updatePeriodField(index, "label", e.target.value)} placeholder="npr. HEPI 2024" />
+                </div>
+                <div className={fieldGroup}>
+                  <label className={labelClasses}>Od datuma</label>
+                  <input className={inputClasses} type="date" value={period.validFrom} onChange={(e) => updatePeriodField(index, "validFrom", e.target.value)} />
+                </div>
+                <div className={fieldGroup}>
+                  <label className={labelClasses}>Model</label>
+                  <select className={inputClasses} value={period.tariffModel} onChange={(e) => updatePeriodField(index, "tariffModel", e.target.value as "single" | "dual")}>
+                    <option value="single">JT</option>
+                    <option value="dual">VT/NT</option>
+                  </select>
+                </div>
+                <div className={fieldGroup}>
+                  <label className={labelClasses}>JT cijena</label>
+                  <input className={inputClasses} type="number" step="0.000001" value={period.energyPriceSingleTariff} onChange={(e) => updatePeriodField(index, "energyPriceSingleTariff", parseFloat(e.target.value) || 0)} />
+                </div>
+                <div className={fieldGroup}>
+                  <label className={labelClasses}>VT cijena</label>
+                  <input className={inputClasses} type="number" step="0.000001" value={period.energyPriceHighTariff} onChange={(e) => updatePeriodField(index, "energyPriceHighTariff", parseFloat(e.target.value) || 0)} />
+                </div>
+                <div className={fieldGroup}>
+                  <label className={labelClasses}>NT cijena</label>
+                  <input className={inputClasses} type="number" step="0.000001" value={period.energyPriceLowTariff} onChange={(e) => updatePeriodField(index, "energyPriceLowTariff", parseFloat(e.target.value) || 0)} />
+                </div>
+                <div className={fieldGroup}>
+                  <label className={labelClasses}>Opskrbna</label>
+                  <input className={inputClasses} type="number" step="0.001" value={period.supplyFee} onChange={(e) => updatePeriodField(index, "supplyFee", parseFloat(e.target.value) || 0)} />
+                </div>
+                <div className={fieldGroup}>
+                  <label className={labelClasses}>Dist JT</label>
+                  <input className={inputClasses} type="number" step="0.000001" value={period.distributionSingleTariff} onChange={(e) => updatePeriodField(index, "distributionSingleTariff", parseFloat(e.target.value) || 0)} />
+                </div>
+                <div className={fieldGroup}>
+                  <label className={labelClasses}>Dist VT</label>
+                  <input className={inputClasses} type="number" step="0.000001" value={period.distributionHighTariff} onChange={(e) => updatePeriodField(index, "distributionHighTariff", parseFloat(e.target.value) || 0)} />
+                </div>
+                <div className={fieldGroup}>
+                  <label className={labelClasses}>Dist NT</label>
+                  <input className={inputClasses} type="number" step="0.000001" value={period.distributionLowTariff} onChange={(e) => updatePeriodField(index, "distributionLowTariff", parseFloat(e.target.value) || 0)} />
+                </div>
+                <div className={fieldGroup}>
+                  <label className={labelClasses}>Prij JT</label>
+                  <input className={inputClasses} type="number" step="0.000001" value={period.transmissionSingleTariff} onChange={(e) => updatePeriodField(index, "transmissionSingleTariff", parseFloat(e.target.value) || 0)} />
+                </div>
+                <div className={fieldGroup}>
+                  <label className={labelClasses}>Prij VT</label>
+                  <input className={inputClasses} type="number" step="0.000001" value={period.transmissionHighTariff} onChange={(e) => updatePeriodField(index, "transmissionHighTariff", parseFloat(e.target.value) || 0)} />
+                </div>
+                <div className={fieldGroup}>
+                  <label className={labelClasses}>Prij NT</label>
+                  <input className={inputClasses} type="number" step="0.000001" value={period.transmissionLowTariff} onChange={(e) => updatePeriodField(index, "transmissionLowTariff", parseFloat(e.target.value) || 0)} />
+                </div>
+                <div className={fieldGroup}>
+                  <label className={labelClasses}>Mjerna</label>
+                  <input className={inputClasses} type="number" step="0.001" value={period.meteringFee} onChange={(e) => updatePeriodField(index, "meteringFee", parseFloat(e.target.value) || 0)} />
+                </div>
+                <div className={fieldGroup}>
+                  <label className={labelClasses}>Solidarna</label>
+                  <input className={inputClasses} type="number" step="0.000001" value={period.solidarityRate} onChange={(e) => updatePeriodField(index, "solidarityRate", parseFloat(e.target.value) || 0)} />
+                </div>
+                <div className={fieldGroup}>
+                  <label className={labelClasses}>OIE</label>
+                  <input className={inputClasses} type="number" step="0.000001" value={period.renewableEnergyRate} onChange={(e) => updatePeriodField(index, "renewableEnergyRate", parseFloat(e.target.value) || 0)} />
+                </div>
+                <div className={fieldGroup}>
+                  <label className={labelClasses}>PDV</label>
+                  <input className={inputClasses} type="number" step="0.01" value={period.vatRate} onChange={(e) => updatePeriodField(index, "vatRate", parseFloat(e.target.value) || 0)} />
+                </div>
+                <div className={`${fieldGroup} justify-end`}>
+                  <label className={labelClasses}>
+                    <input type="checkbox" className="mr-1.5" checked={period.solidarityDiscount} onChange={(e) => updatePeriodField(index, "solidarityDiscount", e.target.checked)} />
+                    Popust sol.
+                  </label>
+                </div>
+              </div>
+            </div>
+          </details>
+        ))}
+
+        <button
+          className="font-mono text-xs text-amber border border-amber/30 rounded-sm px-4 py-2 hover:bg-amber/10 transition-colors cursor-pointer"
+          onClick={handleAddPeriod}
+        >
+          + Dodaj period
+        </button>
       </div>
 
       <div className="flex gap-3 flex-wrap mt-4 sm:mt-6">

@@ -1,5 +1,6 @@
 import {
   Config,
+  TariffPrices,
   CachedMonthData,
   DailyEnergyData,
   FusionSolarDay,
@@ -17,6 +18,7 @@ import {
   RoiAnalysis,
   RoiMonthProjection,
 } from "@/lib/types";
+import { resolveTariff } from "@/lib/config";
 
 const HOURS_IN_DAY = 24;
 const QUARTER_HOUR_FACTOR = 0.25;
@@ -256,9 +258,9 @@ export function calculateDerivedMetrics(
 export function calculateBill(
   sortedDays: string[],
   dailyData: Record<string, DailyEnergyData>,
-  config: Config
+  tariff: TariffPrices
 ): BillBreakdown {
-  const isSingleTariff = config.tariffModel === "single";
+  const isSingleTariff = tariff.tariffModel === "single";
 
   let totalConsumedKwh = 0;
   let totalFeedInKwh = 0;
@@ -272,8 +274,8 @@ export function calculateBill(
   let networkCost = 0;
 
   if (isSingleTariff) {
-    energyCost = netBilledKwh * config.energyPriceSingleTariff;
-    networkCost = netBilledKwh * (config.distributionSingleTariff + config.transmissionSingleTariff);
+    energyCost = netBilledKwh * tariff.energyPriceSingleTariff;
+    networkCost = netBilledKwh * (tariff.distributionSingleTariff + tariff.transmissionSingleTariff);
   } else {
     let consumedHighTariff = 0;
     let consumedLowTariff = 0;
@@ -287,17 +289,17 @@ export function calculateBill(
     }
     const netHighTariff = Math.max(consumedHighTariff - feedInHighTariff, 0);
     const netLowTariff = Math.max(consumedLowTariff - feedInLowTariff, 0);
-    energyCost = netHighTariff * config.energyPriceHighTariff + netLowTariff * config.energyPriceLowTariff;
+    energyCost = netHighTariff * tariff.energyPriceHighTariff + netLowTariff * tariff.energyPriceLowTariff;
     networkCost =
-      netHighTariff * (config.distributionHighTariff + config.transmissionHighTariff) +
-      netLowTariff * (config.distributionLowTariff + config.transmissionLowTariff);
+      netHighTariff * (tariff.distributionHighTariff + tariff.transmissionHighTariff) +
+      netLowTariff * (tariff.distributionLowTariff + tariff.transmissionLowTariff);
   }
 
-  const solidarityCost = config.solidarityDiscount ? 0 : netBilledKwh * config.solidarityRate;
-  const renewableEnergyCost = netBilledKwh * config.renewableEnergyRate;
-  const fixedCosts = config.supplyFee + config.meteringFee;
+  const solidarityCost = tariff.solidarityDiscount ? 0 : netBilledKwh * tariff.solidarityRate;
+  const renewableEnergyCost = netBilledKwh * tariff.renewableEnergyRate;
+  const fixedCosts = tariff.supplyFee + tariff.meteringFee;
   const subtotal = energyCost + networkCost + solidarityCost + renewableEnergyCost + fixedCosts;
-  const vatAmount = subtotal * config.vatRate;
+  const vatAmount = subtotal * tariff.vatRate;
 
   return {
     energyCost,
@@ -318,9 +320,9 @@ export function calculateBill(
 export function calculateBillWithoutSolar(
   sortedDays: string[],
   dailyData: Record<string, DailyEnergyData>,
-  config: Config
+  tariff: TariffPrices
 ): number {
-  const isSingleTariff = config.tariffModel === "single";
+  const isSingleTariff = tariff.tariffModel === "single";
   let totalKwh = 0;
   for (const dateKey of sortedDays) {
     totalKwh += dailyData[dateKey].consumedKwh + dailyData[dateKey].feedInKwh;
@@ -330,8 +332,8 @@ export function calculateBillWithoutSolar(
   let networkCost: number;
 
   if (isSingleTariff) {
-    energyCost = totalKwh * config.energyPriceSingleTariff;
-    networkCost = totalKwh * (config.distributionSingleTariff + config.transmissionSingleTariff);
+    energyCost = totalKwh * tariff.energyPriceSingleTariff;
+    networkCost = totalKwh * (tariff.distributionSingleTariff + tariff.transmissionSingleTariff);
   } else {
     let highTariffKwh = 0;
     let lowTariffKwh = 0;
@@ -339,15 +341,15 @@ export function calculateBillWithoutSolar(
       highTariffKwh += dailyData[dateKey].consumedHighTariffKwh + dailyData[dateKey].feedInHighTariffKwh;
       lowTariffKwh += dailyData[dateKey].consumedLowTariffKwh + dailyData[dateKey].feedInLowTariffKwh;
     }
-    energyCost = highTariffKwh * config.energyPriceHighTariff + lowTariffKwh * config.energyPriceLowTariff;
+    energyCost = highTariffKwh * tariff.energyPriceHighTariff + lowTariffKwh * tariff.energyPriceLowTariff;
     networkCost =
-      highTariffKwh * (config.distributionHighTariff + config.transmissionHighTariff) +
-      lowTariffKwh * (config.distributionLowTariff + config.transmissionLowTariff);
+      highTariffKwh * (tariff.distributionHighTariff + tariff.transmissionHighTariff) +
+      lowTariffKwh * (tariff.distributionLowTariff + tariff.transmissionLowTariff);
   }
 
-  const solidarityCost = config.solidarityDiscount ? 0 : totalKwh * config.solidarityRate;
-  const subtotal = energyCost + networkCost + solidarityCost + totalKwh * config.renewableEnergyRate + config.supplyFee + config.meteringFee;
-  return subtotal + subtotal * config.vatRate;
+  const solidarityCost = tariff.solidarityDiscount ? 0 : totalKwh * tariff.solidarityRate;
+  const subtotal = energyCost + networkCost + solidarityCost + totalKwh * tariff.renewableEnergyRate + tariff.supplyFee + tariff.meteringFee;
+  return subtotal + subtotal * tariff.vatRate;
 }
 
 const SOLAR_PRODUCTION_THRESHOLD_KW = 0.1;
@@ -365,7 +367,7 @@ const SHIFTABLE_FRACTION = 0.4;
 export function analyzeLoadShifting(
   sortedDays: string[],
   hourlyData: Record<string, Record<number, HourlySample>>,
-  config: Config
+  tariff: TariffPrices
 ): LoadShiftAnalysis {
   const dayCount = sortedDays.length || 1;
 
@@ -448,13 +450,13 @@ export function analyzeLoadShifting(
   );
 
   /* Monthly savings estimate: shifted kWh × effective energy rate × days */
-  const isSingleTariff = config.tariffModel === "single";
+  const isSingleTariff = tariff.tariffModel === "single";
   const effectiveRate = isSingleTariff
-    ? config.energyPriceSingleTariff + config.distributionSingleTariff + config.transmissionSingleTariff
-    : config.energyPriceHighTariff + config.distributionHighTariff + config.transmissionHighTariff;
-  const rateWithSurcharges = effectiveRate + config.renewableEnergyRate +
-    (config.solidarityDiscount ? 0 : config.solidarityRate);
-  const rateWithVat = rateWithSurcharges * (1 + config.vatRate);
+    ? tariff.energyPriceSingleTariff + tariff.distributionSingleTariff + tariff.transmissionSingleTariff
+    : tariff.energyPriceHighTariff + tariff.distributionHighTariff + tariff.transmissionHighTariff;
+  const rateWithSurcharges = effectiveRate + tariff.renewableEnergyRate +
+    (tariff.solidarityDiscount ? 0 : tariff.solidarityRate);
+  const rateWithVat = rateWithSurcharges * (1 + tariff.vatRate);
   const estimatedMonthlySavingsEur = shiftableDailyKwh * dayCount * rateWithVat;
 
   return {
@@ -578,11 +580,13 @@ export function computeMonthSummary(
     fusionSolarDaily,
     cached.hasFusionSolar
   );
+  /* Resolve tariff prices for this specific month */
+  const tariff = resolveTariff(config, cached.monthKey);
   const bill = cached.hasConsumption
-    ? calculateBill(cached.sortedDays, cached.dailyData, config)
+    ? calculateBill(cached.sortedDays, cached.dailyData, tariff)
     : null;
   const billWithoutSolar = cached.hasConsumption
-    ? calculateBillWithoutSolar(cached.sortedDays, cached.dailyData, config)
+    ? calculateBillWithoutSolar(cached.sortedDays, cached.dailyData, tariff)
     : 0;
 
   return {

@@ -1,13 +1,13 @@
 "use client";
 
-import { Config, DailyEnergyData, BillBreakdown } from "@/lib/types";
+import { TariffPrices, DailyEnergyData, BillBreakdown } from "@/lib/types";
 
 interface BillPanelProps {
   sortedDays: string[];
   dailyData: Record<string, DailyEnergyData>;
   bill: BillBreakdown;
   billWithoutSolar: number;
-  config: Config;
+  tariff: TariffPrices;
 }
 
 const SAVINGS_DISPLAY_THRESHOLD = 1;
@@ -15,8 +15,8 @@ const SAVINGS_DISPLAY_THRESHOLD = 1;
 const billRow = "flex justify-between py-1.5 font-mono text-xs sm:text-sm";
 const billTotalRow = "flex justify-between py-1.5 font-mono text-xs sm:text-sm border-t border-border-accent mt-1.5 pt-2 font-bold";
 
-export default function BillPanel({ sortedDays, dailyData, bill, billWithoutSolar, config }: BillPanelProps) {
-  const isSingleTariff = config.tariffModel === "single";
+export default function BillPanel({ sortedDays, dailyData, bill, billWithoutSolar, tariff }: BillPanelProps) {
+  const isSingleTariff = tariff.tariffModel === "single";
   const savings = billWithoutSolar - bill.total;
 
   let energyCostBreakdown: React.ReactNode;
@@ -25,19 +25,19 @@ export default function BillPanel({ sortedDays, dailyData, bill, billWithoutSola
   if (isSingleTariff) {
     energyCostBreakdown = (
       <div className={billRow}>
-        <span className="text-text-dim">{bill.netBilledKwh.toFixed(0)} kWh × {config.energyPriceSingleTariff}</span>
+        <span className="text-text-dim">{bill.netBilledKwh.toFixed(0)} kWh × {tariff.energyPriceSingleTariff}</span>
         <span className="text-text font-medium">{bill.energyCost.toFixed(2)} €</span>
       </div>
     );
     networkCostBreakdown = (
       <>
         <div className={billRow}>
-          <span className="text-text-dim">Dist × {config.distributionSingleTariff}</span>
-          <span className="text-text font-medium">{(bill.netBilledKwh * config.distributionSingleTariff).toFixed(2)} €</span>
+          <span className="text-text-dim">Dist × {tariff.distributionSingleTariff}</span>
+          <span className="text-text font-medium">{(bill.netBilledKwh * tariff.distributionSingleTariff).toFixed(2)} €</span>
         </div>
         <div className={billRow}>
-          <span className="text-text-dim">Prij × {config.transmissionSingleTariff}</span>
-          <span className="text-text font-medium">{(bill.netBilledKwh * config.transmissionSingleTariff).toFixed(2)} €</span>
+          <span className="text-text-dim">Prij × {tariff.transmissionSingleTariff}</span>
+          <span className="text-text font-medium">{(bill.netBilledKwh * tariff.transmissionSingleTariff).toFixed(2)} €</span>
         </div>
       </>
     );
@@ -58,12 +58,12 @@ export default function BillPanel({ sortedDays, dailyData, bill, billWithoutSola
     energyCostBreakdown = (
       <>
         <div className={billRow}>
-          <span className="text-text-dim">VT {netHighTariff.toFixed(0)} × {config.energyPriceHighTariff}</span>
-          <span className="text-text font-medium">{(netHighTariff * config.energyPriceHighTariff).toFixed(2)} €</span>
+          <span className="text-text-dim">VT {netHighTariff.toFixed(0)} × {tariff.energyPriceHighTariff}</span>
+          <span className="text-text font-medium">{(netHighTariff * tariff.energyPriceHighTariff).toFixed(2)} €</span>
         </div>
         <div className={billRow}>
-          <span className="text-text-dim">NT {netLowTariff.toFixed(0)} × {config.energyPriceLowTariff}</span>
-          <span className="text-text font-medium">{(netLowTariff * config.energyPriceLowTariff).toFixed(2)} €</span>
+          <span className="text-text-dim">NT {netLowTariff.toFixed(0)} × {tariff.energyPriceLowTariff}</span>
+          <span className="text-text font-medium">{(netLowTariff * tariff.energyPriceLowTariff).toFixed(2)} €</span>
         </div>
       </>
     );
@@ -71,27 +71,27 @@ export default function BillPanel({ sortedDays, dailyData, bill, billWithoutSola
       <>
         <div className={billRow}>
           <span className="text-text-dim">Dist VT</span>
-          <span className="text-text font-medium">{(netHighTariff * config.distributionHighTariff).toFixed(2)} €</span>
+          <span className="text-text font-medium">{(netHighTariff * tariff.distributionHighTariff).toFixed(2)} €</span>
         </div>
         <div className={billRow}>
           <span className="text-text-dim">Dist NT</span>
-          <span className="text-text font-medium">{(netLowTariff * config.distributionLowTariff).toFixed(2)} €</span>
+          <span className="text-text font-medium">{(netLowTariff * tariff.distributionLowTariff).toFixed(2)} €</span>
         </div>
         <div className={billRow}>
           <span className="text-text-dim">Prij VT</span>
-          <span className="text-text font-medium">{(netHighTariff * config.transmissionHighTariff).toFixed(2)} €</span>
+          <span className="text-text font-medium">{(netHighTariff * tariff.transmissionHighTariff).toFixed(2)} €</span>
         </div>
         <div className={billRow}>
           <span className="text-text-dim">Prij NT</span>
-          <span className="text-text font-medium">{(netLowTariff * config.transmissionLowTariff).toFixed(2)} €</span>
+          <span className="text-text font-medium">{(netLowTariff * tariff.transmissionLowTariff).toFixed(2)} €</span>
         </div>
       </>
     );
   }
 
   const solidarityLabel = bill.solidarityCost > 0 ? "Solidarna" : "Solidarna (popust)";
-  const totalSupplyCost = bill.energyCost + bill.solidarityCost + bill.renewableEnergyCost + config.supplyFee;
-  const totalNetworkCost = bill.networkCost + config.meteringFee;
+  const totalSupplyCost = bill.energyCost + bill.solidarityCost + bill.renewableEnergyCost + tariff.supplyFee;
+  const totalNetworkCost = bill.networkCost + tariff.meteringFee;
 
   const savingsRow = savings > SAVINGS_DISPLAY_THRESHOLD ? (
     <div className={billRow}>
@@ -128,7 +128,7 @@ export default function BillPanel({ sortedDays, dailyData, bill, billWithoutSola
           </div>
           <div className={billRow}>
             <span className="text-text-dim">Opskrbna</span>
-            <span className="text-text font-medium">{config.supplyFee.toFixed(2)} €</span>
+            <span className="text-text font-medium">{tariff.supplyFee.toFixed(2)} €</span>
           </div>
           <div className={billTotalRow}>
             <span className="text-text-dim">Σ Opskrba</span>
@@ -141,7 +141,7 @@ export default function BillPanel({ sortedDays, dailyData, bill, billWithoutSola
           {networkCostBreakdown}
           <div className={billRow}>
             <span className="text-text-dim">Mjerna</span>
-            <span className="text-text font-medium">{config.meteringFee.toFixed(2)} €</span>
+            <span className="text-text font-medium">{tariff.meteringFee.toFixed(2)} €</span>
           </div>
           <div className={billTotalRow}>
             <span className="text-text-dim">Σ Mreža</span>
@@ -156,7 +156,7 @@ export default function BillPanel({ sortedDays, dailyData, bill, billWithoutSola
           <span className="text-text font-medium">{bill.subtotal.toFixed(2)} €</span>
         </div>
         <div className={billRow}>
-          <span className="text-text-dim">PDV {(config.vatRate * 100).toFixed(0)}%</span>
+          <span className="text-text-dim">PDV {(tariff.vatRate * 100).toFixed(0)}%</span>
           <span className="text-text font-medium">{bill.vatAmount.toFixed(2)} €</span>
         </div>
         <div className={billTotalRow}>
