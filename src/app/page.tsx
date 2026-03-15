@@ -22,13 +22,14 @@ import {
   analyzeLoadShifting,
   compareTariffModels,
   calculateSystemEfficiency,
+  calculateDegradation,
   calculateRoi,
   calculateForecast,
   aggregateHourlyRadiationToDaily,
   calculateGhiScaleFactors,
   toMonthPrefix,
 } from "@/lib/calculations";
-import { getCachedMonth, setCachedMonth } from "@/lib/cache";
+import { getCachedMonth, setCachedMonth, getAllCachedMonthKeys } from "@/lib/cache";
 import Header from "@/components/Header";
 import TabNav from "@/components/TabNav";
 import MonthNav from "@/components/MonthNav";
@@ -50,6 +51,7 @@ import ShareButton from "@/components/ShareButton";
 import BatterySimulator from "@/components/BatterySimulator";
 import TariffComparisonPanel from "@/components/TariffComparison";
 import SystemEfficiencyPanel from "@/components/SystemEfficiencyPanel";
+import DegradationPanel from "@/components/DegradationPanel";
 
 type TabId = "dash" | "yearly" | "energy" | "hourly" | "optimize" | "battery" | "roi" | "bill" | "table" | "settings";
 
@@ -109,6 +111,8 @@ export default function Home() {
   const [weatherScaleFactors, setWeatherScaleFactors] = useState<Record<string, number>>({});
   /* Raw daily radiation data for system efficiency calculation */
   const [weatherRadiation, setWeatherRadiation] = useState<import("@/lib/types").WeatherDayRadiation[]>([]);
+  /* Degradation analysis from all cached months */
+  const [degradationAnalysis, setDegradationAnalysis] = useState<import("@/lib/types").DegradationAnalysis | null>(null);
 
   useEffect(() => {
     setConfig(loadConfig());
@@ -192,6 +196,32 @@ export default function Home() {
     fetchWeather();
     return () => { cancelled = true; };
   }, [hasData, selectedMonth, config.latitude, config.longitude]);
+
+  /* Compute degradation analysis from all cached months */
+  useEffect(() => {
+    if (!hasData) return;
+    let cancelled = false;
+
+    async function loadDegradation() {
+      const allKeys = await getAllCachedMonthKeys();
+      if (cancelled || allKeys.length < 2) return;
+
+      const allCached: CachedMonthData[] = [];
+      for (const key of allKeys) {
+        const cached = await getCachedMonth(key);
+        if (cancelled) return;
+        if (cached) allCached.push(cached);
+      }
+
+      if (!cancelled) {
+        const analysis = calculateDegradation(allCached, config.installedKwp);
+        setDegradationAnalysis(analysis);
+      }
+    }
+
+    loadDegradation();
+    return () => { cancelled = true; };
+  }, [hasData, cacheRevision, config.installedKwp]);
 
   const handleSaveConfig = useCallback((newConfig: Config) => {
     setConfig(newConfig);
@@ -511,6 +541,7 @@ export default function Home() {
       <EnergyFlow derived={derived} hasFusionSolar={hasFusionSolar} />
       <EnergyCharts sortedDays={sortedDays} derived={derived} hasFusionSolar={hasFusionSolar} hasConsumption={hasConsumption} />
       {systemEfficiency && <SystemEfficiencyPanel efficiency={systemEfficiency} installedKwp={config.installedKwp} />}
+      {degradationAnalysis && <DegradationPanel analysis={degradationAnalysis} installedKwp={config.installedKwp} />}
     </>
   ) : (
     <div className={sectionBox}>

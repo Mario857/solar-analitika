@@ -400,6 +400,40 @@ export interface BatterySimulationResult {
   paybackYears: number;
 }
 
+/** Single month data point for degradation tracking */
+export interface DegradationMonthPoint {
+  /** Month key "YYYY-MM" */
+  monthKey: string;
+  /** Total solar production for the month (kWh) */
+  productionKwh: number;
+  /** Specific yield: production / installed kWp (kWh/kWp) */
+  specificYieldKwhPerKwp: number;
+  /** Whether FusionSolar data was available */
+  hasFusionSolar: boolean;
+}
+
+/** Panel degradation analysis across all cached months */
+export interface DegradationAnalysis {
+  /** Monthly data points sorted chronologically */
+  monthlyPoints: DegradationMonthPoint[];
+  /** Estimated annual degradation rate (% per year, positive = loss) */
+  annualDegradationRatePercent: number;
+  /** Whether enough data exists for reliable trend (at least 6 months) */
+  isReliable: boolean;
+  /** Expected annual degradation for crystalline silicon (~0.5%) */
+  expectedDegradationRatePercent: number;
+  /** Linear regression slope (kWh/kWp per month) */
+  trendSlopePerMonth: number;
+  /** Linear regression intercept */
+  trendIntercept: number;
+  /** First month in dataset */
+  firstMonth: string;
+  /** Last month in dataset */
+  lastMonth: string;
+  /** Total months spanned */
+  totalMonths: number;
+}
+
 /** Raw HEP API meter reading record */
 export interface HEPMeterRecord {
   Datum: string;

@@ -23,6 +23,8 @@ import {
   WeatherDayRadiation,
   RoiAnalysis,
   RoiMonthProjection,
+  DegradationAnalysis,
+  DegradationMonthPoint,
 } from "@/lib/types";
 import { resolveTariff } from "@/lib/config";
 
@@ -465,6 +467,139 @@ export function calculateSystemEfficiency(
     averagePeakSunHours,
     specificYieldKwhPerKwp,
     healthStatus,
+  };
+}
+
+/**
+ * Seasonal irradiance index for Croatia (relative to annual average).
+ * Used to normalize monthly specific yield so summer/winter differences
+ * don't mask the real degradation trend.
+ * Source: typical GHI distribution for continental Croatia (Zagreb area).
+ */
+const SEASONAL_IRRADIANCE_INDEX: Record<number, number> = {
+  1: 0.40, 2: 0.55, 3: 0.80, 4: 1.05,
+  5: 1.30, 6: 1.45, 7: 1.50, 8: 1.35,
+  9: 1.05, 10: 0.70, 11: 0.45, 12: 0.35,
+};
+
+/** Expected annual degradation rate for crystalline silicon panels */
+const EXPECTED_DEGRADATION_RATE_PERCENT = 0.5;
+
+/** Minimum months of data needed for a reliable degradation estimate */
+const MIN_MONTHS_FOR_RELIABLE_TREND = 12;
+
+/**
+ * Minimum time span (in months) between first and last data point.
+ * Degradation analysis across a single season is misleading even with
+ * seasonal normalization, so we require at least 12 months of span.
+ */
+const MIN_SPAN_MONTHS = 12;
+
+/**
+ * Analyze panel degradation across all cached months.
+ * Uses seasonally-normalized specific yield (kWh/kWp) and fits a linear
+ * regression to estimate annual degradation rate.
+ * Returns null if fewer than 12 months of span — seasonal normalization
+ * is unreliable over shorter periods.
+ */
+export function calculateDegradation(
+  cachedMonths: CachedMonthData[],
+  installedKwp: number
+): DegradationAnalysis | null {
+  if (installedKwp <= 0 || cachedMonths.length < 2) return null;
+
+  const monthlyPoints: DegradationMonthPoint[] = [];
+
+  for (const cached of cachedMonths) {
+    const fusionSolarDaily = cached.fusionSolarDaily || {};
+    const derived = calculateDerivedMetrics(
+      cached.sortedDays,
+      cached.dailyData,
+      fusionSolarDaily,
+      cached.hasFusionSolar
+    );
+
+    /* Use FusionSolar total production if available, else feed-in as proxy */
+    const productionKwh = cached.hasFusionSolar
+      ? derived.totalSolarProduction
+      : derived.totalFeedIn;
+
+    if (productionKwh <= 0) continue;
+
+    const specificYield = productionKwh / installedKwp;
+
+    monthlyPoints.push({
+      monthKey: cached.monthKey,
+      productionKwh,
+      specificYieldKwhPerKwp: specificYield,
+      hasFusionSolar: cached.hasFusionSolar,
+    });
+  }
+
+  if (monthlyPoints.length < 2) return null;
+
+  /* Sort chronologically */
+  monthlyPoints.sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+
+  /* Require at least MIN_SPAN_MONTHS between first and last data point.
+     Seasonal normalization is unreliable over shorter periods. */
+  const firstMonthKey = monthlyPoints[0].monthKey;
+  const lastMonthKey = monthlyPoints[monthlyPoints.length - 1].monthKey;
+  const firstYear = parseInt(firstMonthKey.slice(0, 4));
+  const firstMonthNum = parseInt(firstMonthKey.slice(5, 7));
+  const lastYear = parseInt(lastMonthKey.slice(0, 4));
+  const lastMonthNum = parseInt(lastMonthKey.slice(5, 7));
+  const spanMonths = (lastYear - firstYear) * 12 + (lastMonthNum - firstMonthNum) + 1;
+  if (spanMonths < MIN_SPAN_MONTHS) return null;
+
+  /* Normalize specific yield by seasonal index to remove weather seasonality */
+  const normalizedYields: { monthIndex: number; normalizedYield: number }[] = [];
+
+  for (const point of monthlyPoints) {
+    const year = parseInt(point.monthKey.slice(0, 4));
+    const monthNum = parseInt(point.monthKey.slice(5, 7));
+    /* Month index from start (0-based) */
+    const monthIndex = (year - firstYear) * 12 + (monthNum - firstMonthNum);
+    const seasonalFactor = SEASONAL_IRRADIANCE_INDEX[monthNum] || 1.0;
+    /* Normalize: divide by seasonal factor so all months are comparable */
+    const normalizedYield = point.specificYieldKwhPerKwp / seasonalFactor;
+    normalizedYields.push({ monthIndex, normalizedYield });
+  }
+
+  /* Simple linear regression: normalizedYield = slope * monthIndex + intercept */
+  const n = normalizedYields.length;
+  let sumX = 0;
+  let sumY = 0;
+  let sumXY = 0;
+  let sumXX = 0;
+  for (const { monthIndex, normalizedYield } of normalizedYields) {
+    sumX += monthIndex;
+    sumY += normalizedYield;
+    sumXY += monthIndex * normalizedYield;
+    sumXX += monthIndex * monthIndex;
+  }
+
+  const denominator = n * sumXX - sumX * sumX;
+  /* Prevent division by zero when all points share the same month index */
+  const slope = denominator !== 0 ? (n * sumXY - sumX * sumY) / denominator : 0;
+  const intercept = (sumY - slope * sumX) / n;
+
+  /* Convert monthly slope to annual degradation rate as percentage of initial yield */
+  const initialYield = intercept > 0 ? intercept : normalizedYields[0].normalizedYield;
+  const annualDegradationRatePercent = initialYield > 0
+    ? -(slope * 12 / initialYield) * 100
+    : 0;
+
+  return {
+    monthlyPoints,
+    annualDegradationRatePercent,
+    isReliable: monthlyPoints.length >= MIN_MONTHS_FOR_RELIABLE_TREND,
+    expectedDegradationRatePercent: EXPECTED_DEGRADATION_RATE_PERCENT,
+    trendSlopePerMonth: slope,
+    trendIntercept: intercept,
+    firstMonth: firstMonthKey,
+    lastMonth: lastMonthKey,
+    totalMonths: spanMonths,
   };
 }
 
