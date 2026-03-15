@@ -80,17 +80,9 @@ export interface BillBreakdown {
 export interface Config {
   token: string;
   meter: string;
-  /** HEP portal username for auto-login */
-  hepUsername: string;
-  /** HEP portal password for auto-login */
-  hepPassword: string;
   tariffModel: "single" | "dual";
   fusionSolarCookie: string;
   fusionSolarStation: string;
-  /** FusionSolar web portal username for auto-login */
-  fusionSolarUsername: string;
-  /** FusionSolar web portal password for auto-login */
-  fusionSolarPassword: string;
   /** FusionSolar portal subdomain (e.g. "uni004eu5") */
   fusionSolarSubdomain: string;
   /** Single tariff energy price (€/kWh) */
@@ -123,6 +115,14 @@ export interface Config {
   renewableEnergyRate: number;
   /** VAT rate (e.g., 0.13 = 13%) */
   vatRate: number;
+}
+
+/** Session-only credentials — never persisted to localStorage */
+export interface SessionCredentials {
+  hepUsername: string;
+  hepPassword: string;
+  fusionSolarUsername: string;
+  fusionSolarPassword: string;
 }
 
 /** Raw HEP API meter reading record */

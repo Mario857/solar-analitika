@@ -1,17 +1,19 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Config } from "@/lib/types";
+import { Config, SessionCredentials } from "@/lib/types";
 
 interface SettingsProps {
   config: Config;
+  credentials: SessionCredentials;
   onSave: (config: Config) => void;
   onReset: () => void;
+  onCredentialsChange: (credentials: SessionCredentials) => void;
 }
 
 const SAVE_FEEDBACK_DURATION_MS = 2000;
 
-export default function Settings({ config, onSave, onReset }: SettingsProps) {
+export default function Settings({ config, credentials, onSave, onReset, onCredentialsChange }: SettingsProps) {
   const [localConfig, setLocalConfig] = useState<Config>({ ...config });
   const [isSaved, setIsSaved] = useState(false);
 
@@ -21,6 +23,10 @@ export default function Settings({ config, onSave, onReset }: SettingsProps) {
 
   const updateField = <K extends keyof Config>(key: K, value: Config[K]) => {
     setLocalConfig((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const updateCredential = <K extends keyof SessionCredentials>(key: K, value: string) => {
+    onCredentialsChange({ ...credentials, [key]: value });
   };
 
   const handleSave = () => {
@@ -135,7 +141,7 @@ export default function Settings({ config, onSave, onReset }: SettingsProps) {
   );
 
   const networkFields = isSingleTariff ? singleTariffNetworkFields : dualTariffNetworkFields;
-  const saveButtonLabel = isSaved ? "Spremljeno ✓" : "Spremi postavke";
+  const saveButtonLabel = isSaved ? "Spremljeno \u2713" : "Spremi postavke";
 
   return (
     <>
@@ -144,11 +150,11 @@ export default function Settings({ config, onSave, onReset }: SettingsProps) {
         <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
           <div className={fieldGroup}>
             <label className={labelClasses}>Korisničko ime</label>
-            <input className={inputClasses} type="text" value={localConfig.hepUsername} onChange={(e) => updateField("hepUsername", e.target.value)} placeholder="mjerenje.hep.hr korisnik" autoComplete="off" />
+            <input className={inputClasses} type="text" value={credentials.hepUsername} onChange={(e) => updateCredential("hepUsername", e.target.value)} placeholder="mjerenje.hep.hr korisnik" autoComplete="off" />
           </div>
           <div className={fieldGroup}>
             <label className={labelClasses}>Lozinka</label>
-            <input className={inputClasses} type="password" value={localConfig.hepPassword} onChange={(e) => updateField("hepPassword", e.target.value)} placeholder="mjerenje.hep.hr lozinka" autoComplete="off" />
+            <input className={inputClasses} type="password" value={credentials.hepPassword} onChange={(e) => updateCredential("hepPassword", e.target.value)} placeholder="mjerenje.hep.hr lozinka" autoComplete="off" />
           </div>
           <div className={fieldGroup}>
             <label className={labelClasses}>Broj mjernog mjesta</label>
@@ -169,11 +175,11 @@ export default function Settings({ config, onSave, onReset }: SettingsProps) {
         <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
           <div className={fieldGroup}>
             <label className={labelClasses}>Korisničko ime</label>
-            <input className={inputClasses} type="text" value={localConfig.fusionSolarUsername} onChange={(e) => updateField("fusionSolarUsername", e.target.value)} placeholder="FusionSolar email ili korisnik" autoComplete="off" />
+            <input className={inputClasses} type="text" value={credentials.fusionSolarUsername} onChange={(e) => updateCredential("fusionSolarUsername", e.target.value)} placeholder="FusionSolar email ili korisnik" autoComplete="off" />
           </div>
           <div className={fieldGroup}>
             <label className={labelClasses}>Lozinka</label>
-            <input className={inputClasses} type="password" value={localConfig.fusionSolarPassword} onChange={(e) => updateField("fusionSolarPassword", e.target.value)} placeholder="FusionSolar lozinka" autoComplete="off" />
+            <input className={inputClasses} type="password" value={credentials.fusionSolarPassword} onChange={(e) => updateCredential("fusionSolarPassword", e.target.value)} placeholder="FusionSolar lozinka" autoComplete="off" />
           </div>
           <div className={fieldGroup}>
             <label className={labelClasses}>Station DN</label>

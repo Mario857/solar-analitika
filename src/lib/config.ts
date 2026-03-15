@@ -3,13 +3,9 @@ import { Config } from "@/lib/types";
 export const DEFAULTS: Config = {
   token: "",
   meter: "0600171220",
-  hepUsername: "",
-  hepPassword: "",
   tariffModel: "single",
   fusionSolarCookie: "",
   fusionSolarStation: "NE=193510122",
-  fusionSolarUsername: "",
-  fusionSolarPassword: "",
   fusionSolarSubdomain: "uni004eu5",
   energyPriceSingleTariff: 0.123287,
   energyPriceHighTariff: 0.097189,
@@ -41,8 +37,15 @@ export function loadConfig(): Config {
   }
 }
 
+/** Credential keys that must never be persisted */
+const SENSITIVE_KEYS = ["hepUsername", "hepPassword", "fusionSolarUsername", "fusionSolarPassword"];
+
 export function saveConfig(config: Config): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+  const safeConfig = { ...config };
+  for (const key of SENSITIVE_KEYS) {
+    delete (safeConfig as Record<string, unknown>)[key];
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(safeConfig));
 }
 
 export function resetConfig(): Config {

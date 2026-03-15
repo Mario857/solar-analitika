@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import {
   Config,
+  SessionCredentials,
   MonthSelection,
   DailyEnergyData,
   FusionSolarDay,
@@ -52,6 +53,12 @@ function buildInitialMonthList(): MonthSelection[] {
 
 export default function Home() {
   const [config, setConfig] = useState<Config>(() => loadConfig());
+  const [credentials, setCredentials] = useState<SessionCredentials>({
+    hepUsername: "",
+    hepPassword: "",
+    fusionSolarUsername: "",
+    fusionSolarPassword: "",
+  });
   const [activeTab, setActiveTab] = useState<TabId>("dash");
   const [selectedMonth, setSelectedMonth] = useState<MonthSelection>(() => {
     const now = new Date();
@@ -138,7 +145,7 @@ export default function Home() {
 
     // Determine HEP token: auto-login if credentials are set, otherwise use manual token
     let activeHepToken = config.token;
-    const hasHepCredentials = config.hepUsername && config.hepPassword;
+    const hasHepCredentials = credentials.hepUsername && credentials.hepPassword;
 
     if (hasHepCredentials) {
       setStatus({ text: "HEP prijava...", cls: "" });
@@ -147,8 +154,8 @@ export default function Home() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            username: config.hepUsername,
-            password: config.hepPassword,
+            username: credentials.hepUsername,
+            password: credentials.hepPassword,
           }),
         });
         const loginResult = await loginResponse.json();
@@ -199,7 +206,7 @@ export default function Home() {
     let fusionSolarData: Record<string, FusionSolarDay> = {};
 
     // Determine FusionSolar cookie: auto-login if credentials are set, otherwise use manual cookie
-    const hasAutoLoginCredentials = config.fusionSolarUsername && config.fusionSolarPassword;
+    const hasAutoLoginCredentials = credentials.fusionSolarUsername && credentials.fusionSolarPassword;
     let activeFusionSolarCookie = config.fusionSolarCookie;
 
     if (hasAutoLoginCredentials && config.fusionSolarStation) {
@@ -209,8 +216,8 @@ export default function Home() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            username: config.fusionSolarUsername,
-            password: config.fusionSolarPassword,
+            username: credentials.fusionSolarUsername,
+            password: credentials.fusionSolarPassword,
             subdomain: config.fusionSolarSubdomain,
           }),
         });
@@ -261,7 +268,7 @@ export default function Home() {
     const finalStatus = `HEP ✓ ${hasFusionSolarData ? "FusionSolar ✓" : "FS —"}`;
     setStatus({ text: finalStatus, cls: "ok" });
     setIsLoading(false);
-  }, [config, selectedMonth]);
+  }, [config, credentials, selectedMonth]);
 
   const derived = hasData
     ? calculateDerivedMetrics(sortedDays, dailyDataRef.current, fusionSolarRef.current, hasFusionSolar)
@@ -343,7 +350,7 @@ export default function Home() {
       <TabNav activeTab={activeTab} onTabChange={setActiveTab} />
 
       <div className={activeTab === "settings" ? "block" : "hidden"}>
-        <Settings config={config} onSave={handleSaveConfig} onReset={handleResetConfig} />
+        <Settings config={config} credentials={credentials} onSave={handleSaveConfig} onReset={handleResetConfig} onCredentialsChange={setCredentials} />
       </div>
 
       <div className={activeTab === "dash" ? "flex flex-col gap-6" : "hidden"}>
