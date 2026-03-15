@@ -1,6 +1,7 @@
 "use client";
 
 import { TariffPrices, DailyEnergyData, BillBreakdown } from "@/lib/types";
+import ShareButton from "@/components/ShareButton";
 
 interface BillPanelProps {
   sortedDays: string[];
@@ -102,7 +103,10 @@ export default function BillPanel({ sortedDays, dailyData, bill, billWithoutSola
 
   return (
     <div className="bg-surface-1 border border-border rounded-default p-4 mb-4 sm:p-6 sm:mb-6 md:p-8 md:mb-8">
-      <h3 className="font-mono text-xs font-semibold uppercase tracking-widest text-text-dim mb-4">Račun — {isSingleTariff ? "Plavi JT" : "Bijeli VT/NT"} — Net billing</h3>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="font-mono text-xs font-semibold uppercase tracking-widest text-text-dim">Račun — {isSingleTariff ? "Plavi JT" : "Bijeli VT/NT"} — Net billing</h3>
+        <ShareButton targetId="share-bill" fileName="solar-racun" />
+      </div>
 
       <div
         className="flex justify-between py-2 font-mono text-xs sm:text-sm mb-3 border border-border-accent p-2 rounded-sm bg-surface-2"

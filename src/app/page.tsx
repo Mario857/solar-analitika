@@ -44,6 +44,7 @@ import YearlyOverview from "@/components/YearlyOverview";
 import ProductionForecast from "@/components/ProductionForecast";
 import Settings from "@/components/Settings";
 import Donate from "@/components/Donate";
+import ShareButton from "@/components/ShareButton";
 
 type TabId = "dash" | "yearly" | "energy" | "hourly" | "optimize" | "roi" | "bill" | "table" | "settings";
 
@@ -465,18 +466,23 @@ export default function Home() {
 
   const dashboardContent = hasData && derived ? (
     <div>
-      <Cards
-        sortedDays={sortedDays}
-        dailyData={dailyDataRef.current}
-        derived={derived}
-        bill={bill}
-        billWithoutSolar={billWithoutSolar}
-        hasFusionSolar={hasFusionSolar}
-        hasConsumption={hasConsumption}
-      />
+      <div id="share-cards">
+        <Cards
+          sortedDays={sortedDays}
+          dailyData={dailyDataRef.current}
+          derived={derived}
+          bill={bill}
+          billWithoutSolar={billWithoutSolar}
+          hasFusionSolar={hasFusionSolar}
+          hasConsumption={hasConsumption}
+        />
+      </div>
       {forecast && <ProductionForecast forecast={forecast} hasFusionSolar={hasFusionSolar} />}
-      <div className={sectionBox}>
-        <h3 className={sectionHeading}>Dnevni pregled — svi izvori</h3>
+      <div id="share-chart" className={sectionBox}>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-mono text-xs font-semibold uppercase tracking-widest text-text-dim">Dnevni pregled — svi izvori</h3>
+          <ShareButton targetId="share-chart" fileName="solar-dnevni-pregled" />
+        </div>
         <MainChart sortedDays={sortedDays} dailyData={dailyDataRef.current} derived={derived} hasFusionSolar={hasFusionSolar} hasConsumption={hasConsumption} />
       </div>
       <Insights sortedDays={sortedDays} dailyData={dailyDataRef.current} derived={derived} hasFusionSolar={hasFusionSolar} hasConsumption={hasConsumption} bill={bill} billWithoutSolar={billWithoutSolar} />
@@ -505,7 +511,9 @@ export default function Home() {
   );
 
   const billContent = hasData && hasConsumption && bill ? (
-    <BillPanel sortedDays={sortedDays} dailyData={dailyDataRef.current} bill={bill} billWithoutSolar={billWithoutSolar!} tariff={activeTariff} />
+    <div id="share-bill">
+      <BillPanel sortedDays={sortedDays} dailyData={dailyDataRef.current} bill={bill} billWithoutSolar={billWithoutSolar!} tariff={activeTariff} />
+    </div>
   ) : (
     <div className={sectionBox}>
       <h3 className={sectionHeading}>Procjena računa</h3>

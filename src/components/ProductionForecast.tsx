@@ -3,6 +3,7 @@
 import { Bar } from "react-chartjs-2";
 import { MonthForecast } from "@/lib/types";
 import { CHART_OPTIONS } from "@/components/ChartSetup";
+import ShareButton from "@/components/ShareButton";
 
 interface ProductionForecastProps {
   forecast: MonthForecast;
@@ -82,12 +83,15 @@ export default function ProductionForecast({ forecast, hasFusionSolar }: Product
   const hasBillProjection = forecast.projectedBillEur > 0;
 
   return (
-    <div className={sectionBox}>
-      <div className="flex items-center gap-2 mb-4">
-        <h3 className="font-mono text-xs font-semibold uppercase tracking-widest text-text-dim">Prognoza mjeseca</h3>
-        {forecast.isWeatherAdjusted && (
-          <span className="font-mono text-[0.55rem] px-1.5 py-0.5 rounded-sm bg-blue/20 text-blue">WEATHER</span>
-        )}
+    <div id="share-forecast" className={sectionBox}>
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <h3 className="font-mono text-xs font-semibold uppercase tracking-widest text-text-dim">Prognoza mjeseca</h3>
+          {forecast.isWeatherAdjusted && (
+            <span className="font-mono text-[0.55rem] px-1.5 py-0.5 rounded-sm bg-blue/20 text-blue">WEATHER</span>
+          )}
+        </div>
+        <ShareButton targetId="share-forecast" fileName="solar-prognoza" />
       </div>
 
       {/* Progress bar */}
