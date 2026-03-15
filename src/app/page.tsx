@@ -45,8 +45,9 @@ import ProductionForecast from "@/components/ProductionForecast";
 import Settings from "@/components/Settings";
 import Donate from "@/components/Donate";
 import ShareButton from "@/components/ShareButton";
+import BatterySimulator from "@/components/BatterySimulator";
 
-type TabId = "dash" | "yearly" | "energy" | "hourly" | "optimize" | "roi" | "bill" | "table" | "settings";
+type TabId = "dash" | "yearly" | "energy" | "hourly" | "optimize" | "battery" | "roi" | "bill" | "table" | "settings";
 
 const INITIAL_MONTH_COUNT = 6;
 
@@ -570,6 +571,22 @@ export default function Home() {
         ) : (
           <div className={sectionBox}>
             <h3 className={sectionHeading}>Optimizacija potrošnje</h3>
+            <p className={noteText}>{hasData ? "Potrebni podaci preuzete energije." : "Pokrenite analizu."}</p>
+          </div>
+        )}
+      </div>
+      <div className={activeTab === "battery" ? "block" : "hidden"}>
+        {hasData && hasConsumption && derived ? (
+          <BatterySimulator
+            sortedDays={sortedDays}
+            hourlyData={hourlyDataRef.current}
+            derived={derived}
+            tariff={activeTariff}
+            selectedMonth={selectedMonth}
+          />
+        ) : (
+          <div className={sectionBox}>
+            <h3 className={sectionHeading}>Simulacija baterije</h3>
             <p className={noteText}>{hasData ? "Potrebni podaci preuzete energije." : "Pokrenite analizu."}</p>
           </div>
         )}

@@ -286,6 +286,71 @@ export interface MonthSummary {
   savingsEur: number;
 }
 
+/** Battery simulation configuration */
+export interface BatteryConfig {
+  /** Battery capacity in kWh */
+  capacityKwh: number;
+  /** Max charge rate in kW */
+  maxChargeRateKw: number;
+  /** Max discharge rate in kW */
+  maxDischargeRateKw: number;
+  /** Round-trip efficiency (0.0–1.0, e.g. 0.9 = 90%) */
+  roundTripEfficiency: number;
+}
+
+/** Hourly battery state for one time slot */
+export interface BatteryHourState {
+  hour: number;
+  /** Solar generation this hour (kWh) */
+  generationKwh: number;
+  /** Household consumption this hour (kWh) */
+  consumptionKwh: number;
+  /** Energy charged into battery (kWh, after efficiency loss) */
+  chargedKwh: number;
+  /** Energy discharged from battery (kWh, before efficiency loss) */
+  dischargedKwh: number;
+  /** Grid import this hour (kWh) */
+  gridImportKwh: number;
+  /** Grid export this hour (kWh) */
+  gridExportKwh: number;
+  /** State of charge at end of hour (kWh) */
+  stateOfChargeKwh: number;
+  /** Whether this hour is high tariff */
+  isHighTariff: boolean;
+}
+
+/** Full battery simulation result for a month */
+export interface BatterySimulationResult {
+  /** Average hourly profile across all days (24 entries) */
+  averageHourlyProfile: BatteryHourState[];
+  /** Monthly bill with battery (€) */
+  billWithBatteryEur: number;
+  /** Monthly bill without battery — current actual (€) */
+  billWithoutBatteryEur: number;
+  /** Monthly savings from battery (€) */
+  monthlySavingsEur: number;
+  /** Self-consumption rate with battery (%) */
+  selfConsumptionWithBatteryPercent: number;
+  /** Self-consumption rate without battery (%) */
+  selfConsumptionWithoutBatteryPercent: number;
+  /** Self-sufficiency with battery (%) */
+  selfSufficiencyWithBatteryPercent: number;
+  /** Total energy stored over the month (kWh) */
+  totalEnergyStoredKwh: number;
+  /** Total energy discharged over the month (kWh) */
+  totalEnergyDischargedKwh: number;
+  /** Grid import with battery (kWh) */
+  totalGridImportWithBatteryKwh: number;
+  /** Grid export with battery (kWh) */
+  totalGridExportWithBatteryKwh: number;
+  /** Grid import without battery (kWh) — current actual */
+  totalGridImportWithoutBatteryKwh: number;
+  /** Estimated annual savings (€) */
+  estimatedAnnualSavingsEur: number;
+  /** Estimated payback in years for a given battery cost */
+  paybackYears: number;
+}
+
 /** Raw HEP API meter reading record */
 export interface HEPMeterRecord {
   Datum: string;

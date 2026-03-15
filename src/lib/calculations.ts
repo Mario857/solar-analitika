@@ -6,6 +6,9 @@ import {
   FusionSolarDay,
   DerivedMonthlyData,
   BillBreakdown,
+  BatteryConfig,
+  BatteryHourState,
+  BatterySimulationResult,
   ForecastDayEntry,
   HEPMeterRecord,
   HourlySample,
@@ -779,5 +782,268 @@ export function calculateForecast(
     projectedBillEur,
     projectedSavingsEur,
     dailySeries,
+  };
+}
+
+/** Default battery presets for common residential systems */
+export const BATTERY_PRESETS: { label: string; config: BatteryConfig }[] = [
+  { label: "5 kWh", config: { capacityKwh: 5, maxChargeRateKw: 2.5, maxDischargeRateKw: 2.5, roundTripEfficiency: 0.9 } },
+  { label: "10 kWh", config: { capacityKwh: 10, maxChargeRateKw: 5, maxDischargeRateKw: 5, roundTripEfficiency: 0.9 } },
+  { label: "15 kWh", config: { capacityKwh: 15, maxChargeRateKw: 5, maxDischargeRateKw: 5, roundTripEfficiency: 0.9 } },
+];
+
+/** Approximate battery cost per kWh for ROI estimate (€) */
+const BATTERY_COST_PER_KWH_EUR = 500;
+
+/**
+ * Simulate hour-by-hour battery charge/discharge for the month.
+ * Uses greedy strategy: charge from excess solar, discharge when consuming from grid.
+ * Prefers discharging during high tariff hours for maximum savings.
+ */
+export function simulateBattery(
+  sortedDays: string[],
+  hourlyData: Record<string, Record<number, HourlySample>>,
+  derived: DerivedMonthlyData,
+  tariff: TariffPrices,
+  battery: BatteryConfig,
+  selectedMonth: MonthSelection
+): BatterySimulationResult {
+  const chargeEfficiency = Math.sqrt(battery.roundTripEfficiency);
+  const dischargeEfficiency = Math.sqrt(battery.roundTripEfficiency);
+
+  /* Accumulators for monthly totals */
+  let totalEnergyStoredKwh = 0;
+  let totalEnergyDischargedKwh = 0;
+  let totalGridImportWithBatteryKwh = 0;
+  let totalGridExportWithBatteryKwh = 0;
+  let totalSelfConsumedWithBatteryKwh = 0;
+  let totalGenerationKwh = 0;
+  let totalConsumptionKwh = 0;
+
+  /* For bill recalculation with battery */
+  let gridImportHighTariffKwh = 0;
+  let gridImportLowTariffKwh = 0;
+  let gridExportHighTariffKwh = 0;
+  let gridExportLowTariffKwh = 0;
+
+  /* Average hourly profile accumulators (24 slots) */
+  const hourlyTotals: { gen: number; con: number; charged: number; discharged: number; gridIn: number; gridOut: number; soc: number; count: number }[] = [];
+  for (let h = 0; h < HOURS_IN_DAY; h++) {
+    hourlyTotals.push({ gen: 0, con: 0, charged: 0, discharged: 0, gridIn: 0, gridOut: 0, soc: 0, count: 0 });
+  }
+
+  /* Simulate each day independently — battery resets to 0% overnight is unrealistic,
+     so we carry state across days within the month. */
+  let stateOfChargeKwh = 0;
+
+  for (const dateKey of sortedDays) {
+    const dayHourly = hourlyData[dateKey];
+    if (!dayHourly) continue;
+
+    const timestamp = new Date(dateKey + "T00:00:00");
+    const month = timestamp.getMonth();
+    const isSummer = month >= 3 && month <= 9;
+
+    for (let hour = 0; hour < HOURS_IN_DAY; hour++) {
+      const sample = dayHourly[hour];
+      /* HourlySample stores total kWh across all samples in that hour.
+         generation/consumption are already in kWh for the full hour. */
+      const genKwh = sample ? sample.generation : 0;
+      const conKwh = sample ? sample.consumption : 0;
+      const isHighTariff = isSummer ? hour >= 8 && hour < 22 : hour >= 7 && hour < 21;
+
+      totalGenerationKwh += genKwh;
+      totalConsumptionKwh += conKwh;
+
+      /* Net surplus or deficit this hour */
+      const surplus = genKwh - conKwh;
+      let chargedKwh = 0;
+      let dischargedKwh = 0;
+      let gridImportKwh = 0;
+      let gridExportKwh = 0;
+
+      if (surplus > 0) {
+        /* Excess solar — charge battery first, export remainder */
+        const availableCapacity = battery.capacityKwh - stateOfChargeKwh;
+        const maxCharge = Math.min(surplus * chargeEfficiency, battery.maxChargeRateKw * chargeEfficiency, availableCapacity);
+        chargedKwh = Math.max(maxCharge, 0);
+        stateOfChargeKwh += chargedKwh;
+        totalEnergyStoredKwh += chargedKwh;
+
+        /* Remaining surplus goes to grid */
+        const usedForCharging = chargedKwh / chargeEfficiency;
+        gridExportKwh = surplus - usedForCharging;
+      } else {
+        /* Deficit — discharge battery first, import remainder from grid */
+        const deficit = -surplus;
+        const maxDischarge = Math.min(stateOfChargeKwh, battery.maxDischargeRateKw, deficit / dischargeEfficiency);
+        dischargedKwh = Math.max(maxDischarge, 0);
+        stateOfChargeKwh -= dischargedKwh;
+        totalEnergyDischargedKwh += dischargedKwh;
+
+        const coveredByBattery = dischargedKwh * dischargeEfficiency;
+        gridImportKwh = Math.max(deficit - coveredByBattery, 0);
+      }
+
+      totalGridImportWithBatteryKwh += gridImportKwh;
+      totalGridExportWithBatteryKwh += gridExportKwh;
+
+      /* Self-consumed = generation used directly + battery discharge covering consumption */
+      const directSelfConsumed = Math.min(genKwh, conKwh);
+      const batteryContribution = dischargedKwh * dischargeEfficiency;
+      totalSelfConsumedWithBatteryKwh += directSelfConsumed + batteryContribution;
+
+      /* Tariff-split grid flows for bill calculation */
+      if (isHighTariff) {
+        gridImportHighTariffKwh += gridImportKwh;
+        gridExportHighTariffKwh += gridExportKwh;
+      } else {
+        gridImportLowTariffKwh += gridImportKwh;
+        gridExportLowTariffKwh += gridExportKwh;
+      }
+
+      /* Accumulate for average hourly profile */
+      hourlyTotals[hour].gen += genKwh;
+      hourlyTotals[hour].con += conKwh;
+      hourlyTotals[hour].charged += chargedKwh;
+      hourlyTotals[hour].discharged += dischargedKwh;
+      hourlyTotals[hour].gridIn += gridImportKwh;
+      hourlyTotals[hour].gridOut += gridExportKwh;
+      hourlyTotals[hour].soc += stateOfChargeKwh;
+      hourlyTotals[hour].count += 1;
+    }
+  }
+
+  const sampleMonth = sortedDays[0] ? new Date(sortedDays[0] + "T00:00:00") : new Date(selectedMonth.year, selectedMonth.month - 1, 1);
+  const monthIdx = sampleMonth.getMonth();
+  const isSummerSample = monthIdx >= 3 && monthIdx <= 9;
+
+  /* Build average hourly profile */
+  const averageHourlyProfile: BatteryHourState[] = hourlyTotals.map((t, hour) => {
+    const count = t.count || 1;
+    return {
+      hour,
+      generationKwh: t.gen / count,
+      consumptionKwh: t.con / count,
+      chargedKwh: t.charged / count,
+      dischargedKwh: t.discharged / count,
+      gridImportKwh: t.gridIn / count,
+      gridExportKwh: t.gridOut / count,
+      stateOfChargeKwh: t.soc / count,
+      isHighTariff: isSummerSample ? hour >= 8 && hour < 22 : hour >= 7 && hour < 21,
+    };
+  });
+
+  /* Calculate bill with battery using net billing on the battery-adjusted grid flows */
+  const isSingleTariff = tariff.tariffModel === "single";
+  let billWithBatteryEur: number;
+
+  if (isSingleTariff) {
+    const netKwh = Math.max(totalGridImportWithBatteryKwh - totalGridExportWithBatteryKwh, 0);
+    const energyCost = netKwh * tariff.energyPriceSingleTariff;
+    const networkCost = netKwh * (tariff.distributionSingleTariff + tariff.transmissionSingleTariff);
+    const solidarityCost = tariff.solidarityDiscount ? 0 : netKwh * tariff.solidarityRate;
+    const renewableCost = netKwh * tariff.renewableEnergyRate;
+    const subtotal = energyCost + networkCost + solidarityCost + renewableCost + tariff.supplyFee + tariff.meteringFee;
+    billWithBatteryEur = subtotal + subtotal * tariff.vatRate;
+  } else {
+    const netHighKwh = Math.max(gridImportHighTariffKwh - gridExportHighTariffKwh, 0);
+    const netLowKwh = Math.max(gridImportLowTariffKwh - gridExportLowTariffKwh, 0);
+    const netTotalKwh = netHighKwh + netLowKwh;
+    const energyCost = netHighKwh * tariff.energyPriceHighTariff + netLowKwh * tariff.energyPriceLowTariff;
+    const networkCost =
+      netHighKwh * (tariff.distributionHighTariff + tariff.transmissionHighTariff) +
+      netLowKwh * (tariff.distributionLowTariff + tariff.transmissionLowTariff);
+    const solidarityCost = tariff.solidarityDiscount ? 0 : netTotalKwh * tariff.solidarityRate;
+    const renewableCost = netTotalKwh * tariff.renewableEnergyRate;
+    const subtotal = energyCost + networkCost + solidarityCost + renewableCost + tariff.supplyFee + tariff.meteringFee;
+    billWithBatteryEur = subtotal + subtotal * tariff.vatRate;
+  }
+
+  /* Current bill without battery (actual measured values) */
+  const totalGridImportWithoutBatteryKwh = derived.totalConsumed;
+  const billWithoutBatteryEur = derived.totalConsumed > 0
+    ? (() => {
+        /* Reuse existing bill logic via grid import/export totals */
+        if (isSingleTariff) {
+          const netKwh = Math.max(derived.totalConsumed - derived.totalFeedIn, 0);
+          const energyCost = netKwh * tariff.energyPriceSingleTariff;
+          const networkCost = netKwh * (tariff.distributionSingleTariff + tariff.transmissionSingleTariff);
+          const solidarityCost = tariff.solidarityDiscount ? 0 : netKwh * tariff.solidarityRate;
+          const renewableCost = netKwh * tariff.renewableEnergyRate;
+          const subtotal = energyCost + networkCost + solidarityCost + renewableCost + tariff.supplyFee + tariff.meteringFee;
+          return subtotal + subtotal * tariff.vatRate;
+        }
+        /* Dual tariff — sum from daily data */
+        let conHT = 0, conLT = 0, expHT = 0, expLT = 0;
+        for (const day of derived.days) {
+          const dateKey = day.date;
+          const hourly = hourlyData[dateKey];
+          if (!hourly) continue;
+          const ts = new Date(dateKey + "T00:00:00");
+          const m = ts.getMonth();
+          const isSumLocal = m >= 3 && m <= 9;
+          for (let h = 0; h < HOURS_IN_DAY; h++) {
+            const s = hourly[h];
+            if (!s) continue;
+            const isHT = isSumLocal ? h >= 8 && h < 22 : h >= 7 && h < 21;
+            if (isHT) { conHT += s.consumption; expHT += s.generation; }
+            else { conLT += s.consumption; expLT += s.generation; }
+          }
+        }
+        const netHT = Math.max(conHT - expHT, 0);
+        const netLT = Math.max(conLT - expLT, 0);
+        const netTotal = netHT + netLT;
+        const energyCost = netHT * tariff.energyPriceHighTariff + netLT * tariff.energyPriceLowTariff;
+        const networkCost =
+          netHT * (tariff.distributionHighTariff + tariff.transmissionHighTariff) +
+          netLT * (tariff.distributionLowTariff + tariff.transmissionLowTariff);
+        const solidarityCost = tariff.solidarityDiscount ? 0 : netTotal * tariff.solidarityRate;
+        const renewableCost = netTotal * tariff.renewableEnergyRate;
+        const subtotal = energyCost + networkCost + solidarityCost + renewableCost + tariff.supplyFee + tariff.meteringFee;
+        return subtotal + subtotal * tariff.vatRate;
+      })()
+    : 0;
+
+  const monthlySavingsEur = Math.max(billWithoutBatteryEur - billWithBatteryEur, 0);
+
+  /* Self-consumption and self-sufficiency rates */
+  const selfConsumptionWithoutBatteryPercent = totalGenerationKwh > 0
+    ? (derived.totalSelfConsumed / totalGenerationKwh) * 100
+    : 0;
+  const selfConsumptionWithBatteryPercent = totalGenerationKwh > 0
+    ? Math.min((totalSelfConsumedWithBatteryKwh / totalGenerationKwh) * 100, 100)
+    : 0;
+  const selfSufficiencyWithBatteryPercent = totalConsumptionKwh > 0
+    ? Math.min(((totalConsumptionKwh - totalGridImportWithBatteryKwh) / totalConsumptionKwh) * 100, 100)
+    : 0;
+
+  /* Annualize savings using seasonal weights */
+  const currentSeasonalWeight = SEASONAL_WEIGHTS[monthIdx];
+  const normalizedMonthly = currentSeasonalWeight > 0 ? monthlySavingsEur / currentSeasonalWeight : monthlySavingsEur;
+  let estimatedAnnualSavingsEur = 0;
+  for (let i = 0; i < MONTHS_IN_YEAR; i++) {
+    estimatedAnnualSavingsEur += normalizedMonthly * SEASONAL_WEIGHTS[i];
+  }
+
+  /* Payback estimate */
+  const batteryCostEur = battery.capacityKwh * BATTERY_COST_PER_KWH_EUR;
+  const paybackYears = estimatedAnnualSavingsEur > 0 ? batteryCostEur / estimatedAnnualSavingsEur : 99;
+
+  return {
+    averageHourlyProfile,
+    billWithBatteryEur,
+    billWithoutBatteryEur,
+    monthlySavingsEur,
+    selfConsumptionWithBatteryPercent,
+    selfConsumptionWithoutBatteryPercent,
+    selfSufficiencyWithBatteryPercent,
+    totalEnergyStoredKwh,
+    totalEnergyDischargedKwh,
+    totalGridImportWithBatteryKwh,
+    totalGridExportWithBatteryKwh,
+    totalGridImportWithoutBatteryKwh,
+    estimatedAnnualSavingsEur,
+    paybackYears,
   };
 }
