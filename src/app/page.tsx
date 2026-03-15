@@ -52,8 +52,9 @@ import BatterySimulator from "@/components/BatterySimulator";
 import TariffComparisonPanel from "@/components/TariffComparison";
 import SystemEfficiencyPanel from "@/components/SystemEfficiencyPanel";
 import DegradationPanel from "@/components/DegradationPanel";
+import MonthComparison from "@/components/MonthComparison";
 
-type TabId = "dash" | "yearly" | "energy" | "hourly" | "optimize" | "battery" | "roi" | "bill" | "table" | "settings";
+type TabId = "dash" | "yearly" | "energy" | "hourly" | "optimize" | "battery" | "compare" | "roi" | "bill" | "table" | "settings";
 
 const INITIAL_MONTH_COUNT = 6;
 
@@ -643,6 +644,9 @@ export default function Home() {
             <p className={noteText}>{hasData ? "Potrebni podaci preuzete energije." : "Pokrenite analizu."}</p>
           </div>
         )}
+      </div>
+      <div className={activeTab === "compare" ? "block" : "hidden"}>
+        <MonthComparison config={config} cacheRevision={cacheRevision} />
       </div>
       <div className={activeTab === "roi" ? "block" : "hidden"}>
         {roiAnalysis ? (
