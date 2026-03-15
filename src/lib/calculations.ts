@@ -13,6 +13,7 @@ import {
   MonthForecast,
   MonthSelection,
   MonthSummary,
+  WeatherDayRadiation,
   RoiAnalysis,
   RoiMonthProjection,
 } from "@/lib/types";
@@ -604,17 +605,62 @@ const MIN_FORECAST_DAYS = 3;
 /** Low-production day threshold — excluded from forecast average to avoid skewing */
 const FORECAST_LOW_PRODUCTION_THRESHOLD = 0.3;
 
+/** Minimum scale factor clamp to prevent near-zero projections */
+const MIN_WEATHER_SCALE = 0.05;
+/** Maximum scale factor clamp to prevent extreme outliers */
+const MAX_WEATHER_SCALE = 3.0;
+
+/**
+ * Parse Open-Meteo hourly response into daily GHI totals.
+ * Sums hourly shortwave_radiation (W/m²) per day.
+ */
+export function aggregateHourlyRadiationToDaily(
+  response: { hourly: { time: string[]; shortwave_radiation: number[] } }
+): WeatherDayRadiation[] {
+  const dailyMap: Record<string, number> = {};
+
+  for (let i = 0; i < response.hourly.time.length; i++) {
+    const date = response.hourly.time[i].slice(0, 10);
+    const radiation = response.hourly.shortwave_radiation[i] ?? 0;
+    dailyMap[date] = (dailyMap[date] ?? 0) + radiation;
+  }
+
+  return Object.entries(dailyMap).map(([date, dailyGhiWh]) => ({ date, dailyGhiWh }));
+}
+
+/**
+ * Compute per-day weather scale factors by comparing forecast GHI to historical average.
+ * Scale > 1 = sunnier than average, < 1 = cloudier.
+ */
+export function calculateGhiScaleFactors(
+  historicalDays: WeatherDayRadiation[],
+  forecastDays: WeatherDayRadiation[]
+): Record<string, number> {
+  const historicalTotal = historicalDays.reduce((sum, day) => sum + day.dailyGhiWh, 0);
+  const historicalAvg = historicalDays.length > 0 ? historicalTotal / historicalDays.length : 0;
+
+  if (historicalAvg <= 0) return {};
+
+  const scaleFactors: Record<string, number> = {};
+  for (const day of forecastDays) {
+    const raw = day.dailyGhiWh / historicalAvg;
+    scaleFactors[day.date] = Math.max(MIN_WEATHER_SCALE, Math.min(MAX_WEATHER_SCALE, raw));
+  }
+  return scaleFactors;
+}
+
 /**
  * Project remaining days of a partial month based on analyzed data.
- * Uses average daily values from productive days (excludes near-zero days)
- * to estimate month-end totals.
+ * When weatherScaleFactors are provided, solar-dependent metrics (production, feed-in)
+ * are scaled per day by forecasted vs historical solar radiation. Consumption stays flat.
  */
 export function calculateForecast(
   selectedMonth: MonthSelection,
   derived: DerivedMonthlyData,
   bill: BillBreakdown | null,
   billWithoutSolar: number | null,
-  hasFusionSolar: boolean
+  hasFusionSolar: boolean,
+  weatherScaleFactors?: Record<string, number>
 ): MonthForecast | null {
   const totalDaysInMonth = new Date(selectedMonth.year, selectedMonth.month, 0).getDate();
 
@@ -647,27 +693,14 @@ export function calculateForecast(
     ? forecastBasis.reduce((sum, day) => sum + day.selfConsumed, 0) / basisCount
     : 0;
 
-  /* Project totals */
-  const projectedProductionKwh = derived.totalSolarProduction + averageDailyProductionKwh * remainingDays;
-  const projectedFeedInKwh = derived.totalFeedIn + averageDailyFeedInKwh * remainingDays;
-  const projectedConsumedKwh = derived.totalConsumed + averageDailyConsumedKwh * remainingDays;
-  const projectedSelfConsumedKwh = derived.totalSelfConsumed + averageDailySelfConsumedKwh * remainingDays;
-  const projectedHousehold = projectedConsumedKwh + projectedSelfConsumedKwh;
-  const projectedSelfSufficiencyPercent = projectedHousehold > 0
-    ? (projectedSelfConsumedKwh / projectedHousehold) * 100
-    : 0;
+  const isWeatherAdjusted = !!weatherScaleFactors && Object.keys(weatherScaleFactors).length > 0;
 
-  /* Project bill — scale from analyzed portion */
-  let projectedBillEur = 0;
-  let projectedSavingsEur = 0;
-  if (bill && billWithoutSolar !== null) {
-    const scaleFactor = totalDaysInMonth / analyzedDays;
-    projectedBillEur = bill.total * scaleFactor;
-    projectedSavingsEur = (billWithoutSolar - bill.total) * scaleFactor;
-  }
-
-  /* Build daily chart series: active days as "actual", remaining as "projected" */
+  /* Build daily chart series and accumulate projected totals */
   const dailySeries: ForecastDayEntry[] = [];
+  let projectedProductionSum = 0;
+  let projectedFeedInSum = 0;
+  let projectedConsumedSum = 0;
+  let projectedSelfConsumedSum = 0;
 
   for (const day of activeDays) {
     dailySeries.push({
@@ -683,18 +716,50 @@ export function calculateForecast(
 
   for (let dayOffset = 1; dayOffset <= remainingDays; dayOffset++) {
     const dayNumber = analyzedDays + dayOffset;
+    const dateStr = `${selectedMonth.year}-${String(selectedMonth.month).padStart(2, "0")}-${String(dayNumber).padStart(2, "0")}`;
+
+    /* Weather scales solar-dependent values; consumption stays flat */
+    const scale = weatherScaleFactors?.[dateStr] ?? 1;
+    const dayProduction = averageDailyProductionKwh * scale;
+    const dayFeedIn = averageDailyFeedInKwh * scale;
+    const daySelfConsumed = averageDailySelfConsumedKwh * scale;
+
+    projectedProductionSum += dayProduction;
+    projectedFeedInSum += dayFeedIn;
+    projectedConsumedSum += averageDailyConsumedKwh;
+    projectedSelfConsumedSum += daySelfConsumed;
+
     dailySeries.push({
       dayLabel: String(dayNumber).padStart(2, "0"),
       actualProductionKwh: null,
       actualFeedInKwh: null,
       actualConsumedKwh: null,
-      projectedProductionKwh: hasFusionSolar ? averageDailyProductionKwh : null,
-      projectedFeedInKwh: averageDailyFeedInKwh,
+      projectedProductionKwh: hasFusionSolar ? dayProduction : null,
+      projectedFeedInKwh: dayFeedIn,
       projectedConsumedKwh: averageDailyConsumedKwh,
     });
   }
 
+  const projectedProductionKwh = derived.totalSolarProduction + projectedProductionSum;
+  const projectedFeedInKwh = derived.totalFeedIn + projectedFeedInSum;
+  const projectedConsumedKwh = derived.totalConsumed + projectedConsumedSum;
+  const projectedSelfConsumedKwh = derived.totalSelfConsumed + projectedSelfConsumedSum;
+  const projectedHousehold = projectedConsumedKwh + projectedSelfConsumedKwh;
+  const projectedSelfSufficiencyPercent = projectedHousehold > 0
+    ? (projectedSelfConsumedKwh / projectedHousehold) * 100
+    : 0;
+
+  /* Project bill — scale from analyzed portion */
+  let projectedBillEur = 0;
+  let projectedSavingsEur = 0;
+  if (bill && billWithoutSolar !== null) {
+    const scaleFactor = totalDaysInMonth / analyzedDays;
+    projectedBillEur = bill.total * scaleFactor;
+    projectedSavingsEur = (billWithoutSolar - bill.total) * scaleFactor;
+  }
+
   return {
+    isWeatherAdjusted,
     analyzedDays,
     totalDaysInMonth,
     remainingDays,

@@ -22,6 +22,8 @@ import {
   analyzeLoadShifting,
   calculateRoi,
   calculateForecast,
+  aggregateHourlyRadiationToDaily,
+  calculateGhiScaleFactors,
   toMonthPrefix,
 } from "@/lib/calculations";
 import { getCachedMonth, setCachedMonth } from "@/lib/cache";
@@ -96,6 +98,9 @@ export default function Home() {
   /* Track a cache revision counter so YearlyOverview can react to new cached data */
   const [cacheRevision, setCacheRevision] = useState(0);
 
+  /* Weather-based GHI scale factors for production forecast */
+  const [weatherScaleFactors, setWeatherScaleFactors] = useState<Record<string, number>>({});
+
   useEffect(() => {
     setConfig(loadConfig());
   }, []);
@@ -126,6 +131,55 @@ export default function Home() {
     loadFromCache();
     return () => { cancelled = true; };
   }, [selectedMonth]);
+
+  /* Fetch weather radiation data for the current month to compute forecast scale factors */
+  useEffect(() => {
+    if (!hasData) return;
+    let cancelled = false;
+
+    async function fetchWeather() {
+      /* Open-Meteo supports ~92 past days and ~16 forecast days.
+         Clamp the date range to the API's available window. */
+      const today = new Date();
+      const monthStart = new Date(selectedMonth.year, selectedMonth.month - 1, 1);
+      const monthEnd = new Date(selectedMonth.year, selectedMonth.month, 0);
+      const maxPast = new Date(today);
+      maxPast.setDate(maxPast.getDate() - 92);
+      const maxFuture = new Date(today);
+      maxFuture.setDate(maxFuture.getDate() + 16);
+
+      const clampedStart = monthStart < maxPast ? maxPast : monthStart;
+      const clampedEnd = monthEnd > maxFuture ? maxFuture : monthEnd;
+      if (clampedStart >= clampedEnd) return;
+
+      const startDate = clampedStart.toISOString().slice(0, 10);
+      const endDate = clampedEnd.toISOString().slice(0, 10);
+
+      try {
+        const response = await fetch(
+          `/api/weather?latitude=${config.latitude}&longitude=${config.longitude}&start_date=${startDate}&end_date=${endDate}`
+        );
+        if (!response.ok || cancelled) return;
+        const data = await response.json();
+        if (cancelled || !data.hourly) return;
+
+        const dailyRadiation = aggregateHourlyRadiationToDaily(data);
+
+        /* Split into historical (analyzed days) and forecast (remaining days) */
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const historicalDays = dailyRadiation.filter((d) => d.date < todayStr);
+        const forecastDays = dailyRadiation.filter((d) => d.date >= todayStr);
+
+        const scaleFactors = calculateGhiScaleFactors(historicalDays, forecastDays);
+        if (!cancelled) setWeatherScaleFactors(scaleFactors);
+      } catch {
+        /* Weather fetch failed — forecast will use flat averages */
+      }
+    }
+
+    fetchWeather();
+    return () => { cancelled = true; };
+  }, [hasData, selectedMonth, config.latitude, config.longitude]);
 
   const handleSaveConfig = useCallback((newConfig: Config) => {
     setConfig(newConfig);
@@ -389,7 +443,7 @@ export default function Home() {
     : null;
 
   const forecast = hasData && derived
-    ? calculateForecast(selectedMonth, derived, bill, billWithoutSolar, hasFusionSolar)
+    ? calculateForecast(selectedMonth, derived, bill, billWithoutSolar, hasFusionSolar, weatherScaleFactors)
     : null;
 
   const measuredSavings = bill && billWithoutSolar ? billWithoutSolar - bill.total : 0;

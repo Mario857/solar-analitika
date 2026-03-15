@@ -24,6 +24,8 @@ export const DEFAULTS: Config = {
   vatRate: 0.13,
   systemCostEur: 0,
   installationDate: "",
+  latitude: 45.815,
+  longitude: 15.982,
 };
 
 const STORAGE_KEY = "solar4";

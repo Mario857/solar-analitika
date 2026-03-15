@@ -11,7 +11,6 @@ interface ProductionForecastProps {
 
 export default function ProductionForecast({ forecast, hasFusionSolar }: ProductionForecastProps) {
   const sectionBox = "bg-surface-1 border border-border rounded-default p-4 mb-4 sm:p-6 sm:mb-6 md:p-8 md:mb-8";
-  const sectionHeading = "font-mono text-xs font-semibold uppercase tracking-widest text-text-dim mb-4";
   const noteText = "font-mono text-xs text-text-dim leading-normal mt-3";
 
   const labels = forecast.dailySeries.map((entry) => entry.dayLabel);
@@ -84,7 +83,12 @@ export default function ProductionForecast({ forecast, hasFusionSolar }: Product
 
   return (
     <div className={sectionBox}>
-      <h3 className={sectionHeading}>Prognoza mjeseca</h3>
+      <div className="flex items-center gap-2 mb-4">
+        <h3 className="font-mono text-xs font-semibold uppercase tracking-widest text-text-dim">Prognoza mjeseca</h3>
+        {forecast.isWeatherAdjusted && (
+          <span className="font-mono text-[0.55rem] px-1.5 py-0.5 rounded-sm bg-blue/20 text-blue">WEATHER</span>
+        )}
+      </div>
 
       {/* Progress bar */}
       <div className="mb-5">
@@ -161,8 +165,10 @@ export default function ProductionForecast({ forecast, hasFusionSolar }: Product
       </div>
 
       <p className={noteText}>
-        Projekcija na temelju prosjeka od {forecast.analyzedDays} dana. Preostalo {forecast.remainingDays} dana u mjesecu.
-        Dani s proizvodnjom ispod 0.3 kWh su isključeni iz prosjeka.
+        {forecast.isWeatherAdjusted
+          ? `Projekcija prilagođena vremenskoj prognozi (Open-Meteo). Temelj: ${forecast.analyzedDays} dana.`
+          : `Projekcija na temelju prosjeka od ${forecast.analyzedDays} dana.`}
+        {" "}Preostalo {forecast.remainingDays} dana u mjesecu.
       </p>
     </div>
   );

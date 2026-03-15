@@ -119,6 +119,10 @@ export interface Config {
   systemCostEur: number;
   /** Installation date in ISO format (YYYY-MM-DD) */
   installationDate: string;
+  /** Location latitude for weather forecast (default: Zagreb area) */
+  latitude: number;
+  /** Location longitude for weather forecast (default: Zagreb area) */
+  longitude: number;
 }
 
 /** Session-only credentials — never persisted to localStorage */
@@ -186,7 +190,16 @@ export interface RoiAnalysis {
 }
 
 /** Production forecast for a partial month */
+/** Daily solar radiation data from Open-Meteo */
+export interface WeatherDayRadiation {
+  date: string;
+  /** Sum of hourly shortwave radiation (W/m² · h) */
+  dailyGhiWh: number;
+}
+
 export interface MonthForecast {
+  /** Whether weather forecast data was used for scaling */
+  isWeatherAdjusted: boolean;
   /** Number of days with actual data */
   analyzedDays: number;
   /** Total days in the month */

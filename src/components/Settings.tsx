@@ -226,6 +226,28 @@ export default function Settings({ config, credentials, onSave, onReset, onCrede
             />
             <span className={unitClasses}>Za praćenje napretka otplate</span>
           </div>
+          <div className={fieldGroup}>
+            <label className={labelClasses}>Latitude</label>
+            <input
+              className={inputClasses}
+              type="number"
+              step="0.001"
+              value={localConfig.latitude}
+              onChange={(e) => updateField("latitude", parseFloat(e.target.value) || 0)}
+            />
+            <span className={unitClasses}>Za vremensku prognozu</span>
+          </div>
+          <div className={fieldGroup}>
+            <label className={labelClasses}>Longitude</label>
+            <input
+              className={inputClasses}
+              type="number"
+              step="0.001"
+              value={localConfig.longitude}
+              onChange={(e) => updateField("longitude", parseFloat(e.target.value) || 0)}
+            />
+            <span className={unitClasses}>Za vremensku prognozu</span>
+          </div>
         </div>
       </div>
 
