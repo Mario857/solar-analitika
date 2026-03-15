@@ -5,6 +5,7 @@ import {
   Config,
   SessionCredentials,
   MonthSelection,
+  CachedMonthData,
   DailyEnergyData,
   FusionSolarDay,
   HourlySample,
@@ -20,7 +21,9 @@ import {
   formatMonthForApi,
   analyzeLoadShifting,
   calculateRoi,
+  toMonthPrefix,
 } from "@/lib/calculations";
+import { getCachedMonth, setCachedMonth } from "@/lib/cache";
 import Header from "@/components/Header";
 import TabNav from "@/components/TabNav";
 import MonthNav from "@/components/MonthNav";
@@ -34,15 +37,17 @@ import BillPanel from "@/components/BillPanel";
 import DataTable from "@/components/DataTable";
 import LoadShiftInsights from "@/components/LoadShiftInsights";
 import RoiCalculator from "@/components/RoiCalculator";
+import YearlyOverview from "@/components/YearlyOverview";
 import Settings from "@/components/Settings";
 
-type TabId = "dash" | "energy" | "hourly" | "optimize" | "roi" | "bill" | "table" | "settings";
+type TabId = "dash" | "yearly" | "energy" | "hourly" | "optimize" | "roi" | "bill" | "table" | "settings";
 
 const INITIAL_MONTH_COUNT = 6;
 
 const STATUS_COLOR_MAP: Record<string, string> = {
   err: "text-red",
   ok: "text-green",
+  cached: "text-cyan",
 };
 
 function buildInitialMonthList(): MonthSelection[] {
@@ -75,15 +80,50 @@ export default function Home() {
   const [hasData, setHasData] = useState(false);
   const [hasConsumption, setHasConsumption] = useState(false);
   const [hasFusionSolar, setHasFusionSolar] = useState(false);
+  const [isCached, setIsCached] = useState(false);
 
   const dailyDataRef = useRef<Record<string, DailyEnergyData>>({});
   const fusionSolarRef = useRef<Record<string, FusionSolarDay>>({});
   const hourlyDataRef = useRef<Record<string, Record<number, HourlySample>>>({});
   const [sortedDays, setSortedDays] = useState<string[]>([]);
 
+  /* Store active tokens so yearly batch loading can reuse them */
+  const activeHepTokenRef = useRef<string>("");
+  const activeFsCookieRef = useRef<string>("");
+
+  /* Track a cache revision counter so YearlyOverview can react to new cached data */
+  const [cacheRevision, setCacheRevision] = useState(0);
+
   useEffect(() => {
     setConfig(loadConfig());
   }, []);
+
+  function applyCachedData(cached: CachedMonthData) {
+    dailyDataRef.current = cached.dailyData;
+    fusionSolarRef.current = cached.fusionSolarDaily;
+    hourlyDataRef.current = cached.hourlyData;
+    setSortedDays(cached.sortedDays);
+    setHasConsumption(cached.hasConsumption);
+    setHasFusionSolar(cached.hasFusionSolar);
+    setHasData(true);
+    setIsCached(true);
+  }
+
+  /* Auto-load from cache when selectedMonth changes */
+  useEffect(() => {
+    let cancelled = false;
+    async function loadFromCache() {
+      const monthKey = toMonthPrefix(selectedMonth);
+      const cached = await getCachedMonth(monthKey);
+      if (cancelled) return;
+      if (cached) {
+        applyCachedData(cached);
+        setStatus({ text: `Predmemorija (${cached.cachedAt.slice(0, 10)})`, cls: "cached" });
+      }
+    }
+    loadFromCache();
+    return () => { cancelled = true; };
+  }, [selectedMonth]);
 
   const handleSaveConfig = useCallback((newConfig: Config) => {
     setConfig(newConfig);
@@ -142,13 +182,71 @@ export default function Home() {
     return data;
   }
 
-  const handleAnalyze = useCallback(async () => {
-    const formattedMonth = formatMonthForApi(selectedMonth);
-    setIsLoading(true);
-    setHasData(false);
+  /**
+   * Core data fetching + processing logic, extracted so both handleAnalyze
+   * and yearly batch loading can use it. Returns CachedMonthData or null on failure.
+   */
+  async function fetchAndProcessMonth(
+    month: MonthSelection,
+    hepToken: string,
+    fsCookie: string,
+    currentConfig: Config
+  ): Promise<CachedMonthData | null> {
+    const formattedMonth = formatMonthForApi(month);
 
-    // Determine HEP token: auto-login if credentials are set, otherwise use manual token
-    let activeHepToken = config.token;
+    let generationRecords: HEPMeterRecord[];
+    let consumptionRecords: HEPMeterRecord[] = [];
+
+    try {
+      generationRecords = await fetchHEPData(hepToken, currentConfig.meter, formattedMonth, "R");
+    } catch {
+      return null;
+    }
+
+    try {
+      consumptionRecords = await fetchHEPData(hepToken, currentConfig.meter, formattedMonth, "P");
+    } catch {
+      consumptionRecords = [];
+    }
+
+    const hasConsumptionData = consumptionRecords.length > 0;
+
+    let hasFusionSolarData = false;
+    let fusionSolarData: Record<string, FusionSolarDay> = {};
+
+    if (fsCookie && currentConfig.fusionSolarStation) {
+      try {
+        const fusionSolarResponse = await fetchFusionSolarData(fsCookie, currentConfig.fusionSolarStation, month);
+        fusionSolarData = parseFusionSolarResponse(fusionSolarResponse, month);
+        hasFusionSolarData = Object.keys(fusionSolarData).length > 0;
+      } catch {
+        /* FusionSolar fetch failed — continue without it */
+      }
+    }
+
+    const { dailyData, hourlyData } = processHEPRecords(generationRecords, consumptionRecords, month);
+    const days = Object.keys(dailyData).sort();
+    if (days.length === 0) return null;
+
+    const monthKey = toMonthPrefix(month);
+    const cached: CachedMonthData = {
+      monthKey,
+      cachedAt: new Date().toISOString(),
+      dailyData,
+      fusionSolarDaily: fusionSolarData,
+      hourlyData,
+      sortedDays: days,
+      hasConsumption: hasConsumptionData,
+      hasFusionSolar: hasFusionSolarData,
+    };
+
+    await setCachedMonth(cached);
+    return cached;
+  }
+
+  /** Resolve active tokens: login if credentials set, otherwise use manual tokens */
+  async function resolveTokens(): Promise<{ hepToken: string; fsCookie: string } | null> {
+    let hepToken = config.token;
     const hasHepCredentials = credentials.hepUsername && credentials.hepPassword;
 
     if (hasHepCredentials) {
@@ -164,54 +262,24 @@ export default function Home() {
         });
         const loginResult = await loginResponse.json();
         if (loginResult.success && loginResult.token) {
-          activeHepToken = loginResult.token;
-          setStatus({ text: "HEP prijava ✓", cls: "" });
+          hepToken = loginResult.token;
         } else {
           setStatus({ text: `HEP prijava: ${loginResult.error || "neuspjeh"}`, cls: "err" });
-          setIsLoading(false);
-          return;
+          return null;
         }
       } catch (error) {
         setStatus({ text: `HEP prijava: ${(error as Error).message}`, cls: "err" });
-        setIsLoading(false);
-        return;
+        return null;
       }
     }
 
-    if (!activeHepToken) {
+    if (!hepToken) {
       setStatus({ text: "HEP: unesite korisničke podatke ili token u Postavkama", cls: "err" });
-      setIsLoading(false);
-      return;
+      return null;
     }
 
-    setStatus({ text: "HEP predano (R)...", cls: "" });
-    let generationRecords: HEPMeterRecord[];
-    let consumptionRecords: HEPMeterRecord[] = [];
-
-    try {
-      generationRecords = await fetchHEPData(activeHepToken, config.meter, formattedMonth, "R");
-    } catch (error) {
-      setStatus({ text: `HEP gen: ${(error as Error).message}`, cls: "err" });
-      setIsLoading(false);
-      return;
-    }
-
-    setStatus({ text: `${generationRecords.length} gen. HEP preuzeto (P)...`, cls: "" });
-    try {
-      consumptionRecords = await fetchHEPData(activeHepToken, config.meter, formattedMonth, "P");
-    } catch {
-      consumptionRecords = [];
-    }
-
-    const hasConsumptionData = consumptionRecords.length > 0;
-    setHasConsumption(hasConsumptionData);
-
-    let hasFusionSolarData = false;
-    let fusionSolarData: Record<string, FusionSolarDay> = {};
-
-    // Determine FusionSolar cookie: auto-login if credentials are set, otherwise use manual cookie
+    let fsCookie = config.fusionSolarCookie;
     const hasAutoLoginCredentials = credentials.fusionSolarUsername && credentials.fusionSolarPassword;
-    let activeFusionSolarCookie = config.fusionSolarCookie;
 
     if (hasAutoLoginCredentials && config.fusionSolarStation) {
       setStatus({ text: "FusionSolar prijava...", cls: "" });
@@ -227,52 +295,83 @@ export default function Home() {
         });
         const loginResult = await loginResponse.json();
         if (loginResult.success && loginResult.cookie) {
-          activeFusionSolarCookie = loginResult.cookie;
-          setStatus({ text: "FS prijava ✓", cls: "" });
-        } else {
-          setStatus({ text: `FS prijava: ${loginResult.error || "neuspjeh"}`, cls: "err" });
+          fsCookie = loginResult.cookie;
         }
-      } catch (error) {
-        setStatus({ text: `FS prijava: ${(error as Error).message}`, cls: "err" });
+      } catch {
+        /* FS login failed — continue without it */
       }
     }
 
-    if (activeFusionSolarCookie && config.fusionSolarStation) {
-      setStatus({ text: "FusionSolar podaci...", cls: "" });
-      try {
-        const fusionSolarResponse = await fetchFusionSolarData(activeFusionSolarCookie, config.fusionSolarStation, selectedMonth);
-        fusionSolarData = parseFusionSolarResponse(fusionSolarResponse, selectedMonth);
-        hasFusionSolarData = Object.keys(fusionSolarData).length > 0;
-        const statusText = hasFusionSolarData ? "FS ✓" : "FS: no daily data found";
-        setStatus({ text: statusText, cls: "" });
-      } catch (error) {
-        setStatus({ text: `FS: ${(error as Error).message}`, cls: "" });
-      }
+    /* Store active tokens for reuse by yearly batch loading */
+    activeHepTokenRef.current = hepToken;
+    activeFsCookieRef.current = fsCookie;
+
+    return { hepToken, fsCookie };
+  }
+
+  async function handleAnalyze() {
+    setIsLoading(true);
+    setHasData(false);
+    setIsCached(false);
+
+    const tokens = await resolveTokens();
+    if (!tokens) {
+      setIsLoading(false);
+      return;
     }
 
-    setHasFusionSolar(hasFusionSolarData);
+    setStatus({ text: "Dohvaćanje podataka...", cls: "" });
 
-    setStatus({ text: "Analiza...", cls: "" });
-
-    const { dailyData, hourlyData } = processHEPRecords(generationRecords, consumptionRecords, selectedMonth);
-    dailyDataRef.current = dailyData;
-    hourlyDataRef.current = hourlyData;
-    fusionSolarRef.current = fusionSolarData;
-
-    const days = Object.keys(dailyData).sort();
-    setSortedDays(days);
-
-    if (days.length === 0) {
+    const cached = await fetchAndProcessMonth(selectedMonth, tokens.hepToken, tokens.fsCookie, config);
+    if (!cached) {
       setStatus({ text: "Nema podataka", cls: "err" });
       setIsLoading(false);
       return;
     }
 
-    setHasData(true);
-    const finalStatus = `HEP ✓ ${hasFusionSolarData ? "FusionSolar ✓" : "FS —"}`;
+    applyCachedData(cached);
+    setIsCached(false);
+    setCacheRevision((prev) => prev + 1);
+
+    const finalStatus = `HEP ✓ ${cached.hasFusionSolar ? "FusionSolar ✓" : "FS —"}`;
     setStatus({ text: finalStatus, cls: "ok" });
     setIsLoading(false);
-  }, [config, credentials, selectedMonth]);
+  }
+
+  /**
+   * Callback for YearlyOverview: fetch a single month using stored tokens.
+   * Returns "ok" on success, "no-data" if month has no records (e.g. no panels installed),
+   * or "auth-error" if login is needed. Does NOT update the main dashboard state.
+   */
+  async function handleLoadMonthForYearly(
+    month: MonthSelection,
+    forceRefresh = false
+  ): Promise<"ok" | "no-data" | "auth-error"> {
+    /* Check cache first (skip if force-refreshing) */
+    if (!forceRefresh) {
+      const monthKey = toMonthPrefix(month);
+      const existing = await getCachedMonth(monthKey);
+      if (existing) return "ok";
+    }
+
+    /* Need tokens — try to login if not already done */
+    if (!activeHepTokenRef.current) {
+      const tokens = await resolveTokens();
+      if (!tokens) return "auth-error";
+    }
+
+    const cached = await fetchAndProcessMonth(
+      month,
+      activeHepTokenRef.current,
+      activeFsCookieRef.current,
+      config
+    );
+    if (cached) {
+      setCacheRevision((prev) => prev + 1);
+      return "ok";
+    }
+    return "no-data";
+  }
 
   const derived = hasData
     ? calculateDerivedMetrics(sortedDays, dailyDataRef.current, fusionSolarRef.current, hasFusionSolar)
@@ -297,6 +396,8 @@ export default function Home() {
   const sectionBox = "bg-surface-1 border border-border rounded-default p-4 mb-4 sm:p-6 sm:mb-6 md:p-8 md:mb-8";
   const sectionHeading = "font-mono text-xs font-semibold uppercase tracking-widest text-text-dim mb-4";
   const noteText = "font-mono text-xs text-text-dim leading-normal mt-3";
+
+  const analyzeButtonLabel = isCached ? "OSVJEŽI" : "ANALIZIRAJ";
 
   const dashboardContent = hasData && derived ? (
     <div>
@@ -373,7 +474,7 @@ export default function Home() {
             onClick={handleAnalyze}
             disabled={isLoading}
           >
-            ANALIZIRAJ
+            {analyzeButtonLabel}
           </button>
           <div className={`flex items-center gap-2 font-mono text-xs min-h-5 ${statusColorClass} ${isLoading ? "loading" : ""}`}>
             <div className="spinner" />
@@ -381,6 +482,10 @@ export default function Home() {
           </div>
         </div>
         {dashboardContent}
+      </div>
+
+      <div className={activeTab === "yearly" ? "block" : "hidden"}>
+        <YearlyOverview config={config} onLoadMonth={handleLoadMonthForYearly} cacheRevision={cacheRevision} />
       </div>
 
       <div className={activeTab === "energy" ? "block" : "hidden"}>{energyContent}</div>

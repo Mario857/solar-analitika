@@ -1,5 +1,6 @@
 import {
   Config,
+  CachedMonthData,
   DailyEnergyData,
   FusionSolarDay,
   DerivedMonthlyData,
@@ -7,6 +8,7 @@ import {
   HEPMeterRecord,
   HourlySample,
   MonthSelection,
+  MonthSummary,
   LoadShiftAnalysis,
   HourlyLoadShiftProfile,
   RoiAnalysis,
@@ -558,5 +560,39 @@ export function calculateRoi(
     monthsElapsed,
     estimatedCumulativeSavingsEur,
     projections,
+  };
+}
+
+/** Compute a month summary from cached data for the yearly overview */
+export function computeMonthSummary(
+  cached: CachedMonthData,
+  config: Config
+): MonthSummary {
+  const fusionSolarDaily: Record<string, FusionSolarDay> = cached.fusionSolarDaily || {};
+  const derived = calculateDerivedMetrics(
+    cached.sortedDays,
+    cached.dailyData,
+    fusionSolarDaily,
+    cached.hasFusionSolar
+  );
+  const bill = cached.hasConsumption
+    ? calculateBill(cached.sortedDays, cached.dailyData, config)
+    : null;
+  const billWithoutSolar = cached.hasConsumption
+    ? calculateBillWithoutSolar(cached.sortedDays, cached.dailyData, config)
+    : 0;
+
+  return {
+    monthKey: cached.monthKey,
+    totalFeedInKwh: derived.totalFeedIn,
+    totalConsumedKwh: derived.totalConsumed,
+    totalSolarProductionKwh: derived.totalSolarProduction,
+    totalSelfConsumedKwh: derived.totalSelfConsumed,
+    totalHouseholdKwh: derived.totalHousehold,
+    selfConsumptionRatePercent: derived.selfConsumptionRate,
+    selfSufficiencyPercent: derived.selfSufficiency,
+    billTotalEur: bill?.total ?? 0,
+    billWithoutSolarEur: billWithoutSolar,
+    savingsEur: bill ? billWithoutSolar - bill.total : 0,
   };
 }

@@ -185,6 +185,35 @@ export interface RoiAnalysis {
   projections: RoiMonthProjection[];
 }
 
+/** Cached monthly analysis result stored in IndexedDB */
+export interface CachedMonthData {
+  /** Cache key: "YYYY-MM" */
+  monthKey: string;
+  /** When this data was cached (ISO string) */
+  cachedAt: string;
+  dailyData: Record<string, DailyEnergyData>;
+  fusionSolarDaily: Record<string, FusionSolarDay>;
+  hourlyData: Record<string, Record<number, HourlySample>>;
+  sortedDays: string[];
+  hasConsumption: boolean;
+  hasFusionSolar: boolean;
+}
+
+/** Summary for one month used in the yearly overview */
+export interface MonthSummary {
+  monthKey: string;
+  totalFeedInKwh: number;
+  totalConsumedKwh: number;
+  totalSolarProductionKwh: number;
+  totalSelfConsumedKwh: number;
+  totalHouseholdKwh: number;
+  selfConsumptionRatePercent: number;
+  selfSufficiencyPercent: number;
+  billTotalEur: number;
+  billWithoutSolarEur: number;
+  savingsEur: number;
+}
+
 /** Raw HEP API meter reading record */
 export interface HEPMeterRecord {
   Datum: string;
