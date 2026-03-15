@@ -89,11 +89,11 @@ export default function Insights({
   if (items.length === 0) return null;
 
   return (
-    <div className="bg-surface-1 border border-border rounded-default p-8 mb-8">
-      <h3 className="font-mono text-[0.8rem] font-semibold uppercase tracking-[1.5px] text-text-dim mb-5">Uvidi</h3>
+    <div className="bg-surface-1 border border-border rounded-default p-4 mb-4 sm:p-6 sm:mb-6 md:p-8 md:mb-8">
+      <h3 className="font-mono text-xs font-semibold uppercase tracking-widest text-text-dim mb-4">Uvidi</h3>
       {items.map((item, index) => (
-        <div key={index} className="text-[0.88rem] py-3 border-b border-border leading-[1.5] flex gap-4 items-baseline last:border-b-0">
-          <span className={`inline-block font-mono text-[0.6rem] font-bold px-3 py-1.5 rounded-[4px] uppercase tracking-[0.5px] shrink-0 ${TAG_STYLE_MAP[item.tagClass] || ""}`}>{item.tag}</span>
+        <div key={index} className="text-xs py-1.5 border-b border-border leading-relaxed flex gap-2.5 items-baseline last:border-b-0">
+          <span className={`inline-block font-mono text-[0.55rem] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide shrink-0 ${TAG_STYLE_MAP[item.tagClass] || ""}`}>{item.tag}</span>
           <span>{item.text}</span>
         </div>
       ))}

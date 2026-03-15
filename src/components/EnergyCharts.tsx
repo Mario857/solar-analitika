@@ -78,17 +78,20 @@ export default function EnergyCharts({ sortedDays, derived, hasFusionSolar }: En
     },
   };
 
+  const sectionBox = "bg-surface-1 border border-border rounded-default p-4 mb-4 sm:p-6 sm:mb-6 md:p-8 md:mb-8";
+  const sectionHeading = "font-mono text-xs font-semibold uppercase tracking-widest text-text-dim mb-4";
+
   return (
     <>
-      <div className="bg-surface-1 border border-border rounded-default p-8 mb-8">
-        <h3 className="font-mono text-[0.8rem] font-semibold uppercase tracking-[1.5px] text-text-dim mb-5">Proizvodnja vs Potrošnja kuće</h3>
-        <div className="relative w-full min-h-[260px]">
+      <div className={sectionBox}>
+        <h3 className={sectionHeading}>Proizvodnja vs Potrošnja kuće</h3>
+        <div className="relative w-full min-h-[220px] sm:min-h-[260px]">
           <Bar data={productionVsConsumptionData} options={CHART_OPTIONS} />
         </div>
       </div>
-      <div className="bg-surface-1 border border-border rounded-default p-8 mb-8">
-        <h3 className="font-mono text-[0.8rem] font-semibold uppercase tracking-[1.5px] text-text-dim mb-5">Samodostatnost po danu (%)</h3>
-        <div className="relative w-full min-h-[260px]">
+      <div className={sectionBox}>
+        <h3 className={sectionHeading}>Samodostatnost po danu (%)</h3>
+        <div className="relative w-full min-h-[220px] sm:min-h-[260px]">
           <Bar data={selfSufficiencyData} options={sufficiencyChartOptions} />
         </div>
       </div>

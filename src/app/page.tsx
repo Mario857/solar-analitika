@@ -215,9 +215,9 @@ export default function Home() {
 
   const statusColorClass = STATUS_COLOR_MAP[status.cls] || "text-text-dim";
 
-  const sectionBox = "bg-surface-1 border border-border rounded-default p-8 mb-8";
-  const sectionHeading = "font-mono text-[0.8rem] font-semibold uppercase tracking-[1.5px] text-text-dim mb-5";
-  const noteText = "font-mono text-[0.78rem] text-text-dim leading-normal mt-3";
+  const sectionBox = "bg-surface-1 border border-border rounded-default p-4 mb-4 sm:p-6 sm:mb-6 md:p-8 md:mb-8";
+  const sectionHeading = "font-mono text-xs font-semibold uppercase tracking-widest text-text-dim mb-4";
+  const noteText = "font-mono text-xs text-text-dim leading-normal mt-3";
 
   const dashboardContent = hasData && derived ? (
     <div>
@@ -278,7 +278,7 @@ export default function Home() {
   );
 
   return (
-    <div className="relative z-1 w-full max-w-[1100px] flex flex-col gap-6 px-10 pt-10 pb-20">
+    <div className="relative z-1 w-full max-w-[1100px] flex flex-col gap-4 px-4 pt-6 pb-16 sm:px-6 md:px-10 md:gap-6 md:pt-10 md:pb-20">
       <Header meter={config.meter} />
       <TabNav activeTab={activeTab} onTabChange={setActiveTab} />
 
@@ -290,13 +290,13 @@ export default function Home() {
         <MonthNav monthList={monthList} selectedMonth={selectedMonth} onPickMonth={setSelectedMonth} onShiftMonth={handleShiftMonth} />
         <div className="flex gap-5 items-center flex-wrap">
           <button
-            className="bg-amber text-background border-none rounded-sm px-10 py-4 font-body text-[0.95rem] font-bold cursor-pointer transition-all duration-[120ms] whitespace-nowrap hover:bg-[#f5b030] hover:-translate-y-px active:translate-y-0 disabled:opacity-35 disabled:cursor-wait disabled:translate-y-0"
+            className="bg-amber text-background border-none rounded-sm px-6 py-2.5 font-body text-sm font-bold cursor-pointer transition-all duration-150 whitespace-nowrap hover:bg-[#f5b030] hover:-translate-y-px active:translate-y-0 disabled:opacity-35 disabled:cursor-wait disabled:translate-y-0"
             onClick={handleAnalyze}
             disabled={isLoading}
           >
             ANALIZIRAJ
           </button>
-          <div className={`flex items-center gap-3 font-mono text-[0.82rem] min-h-5 ${statusColorClass} ${isLoading ? "loading" : ""}`}>
+          <div className={`flex items-center gap-2 font-mono text-xs min-h-5 ${statusColorClass} ${isLoading ? "loading" : ""}`}>
             <div className="spinner" />
             <span>{status.text}</span>
           </div>

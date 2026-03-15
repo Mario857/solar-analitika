@@ -37,15 +37,15 @@ export default function Settings({ config, onSave, onReset }: SettingsProps) {
 
   const isSingleTariff = localConfig.tariffModel === "single";
 
-  const sectionBox = "bg-surface-1 border border-border rounded-default p-8 mb-8";
-  const sectionHeading = "font-mono text-[0.8rem] font-semibold uppercase tracking-[1.5px] text-text-dim mb-6";
-  const inputClasses = "bg-background border border-border rounded-sm px-4 py-3.5 text-text font-mono text-[0.88rem] outline-none transition-all duration-150 w-full resize-y focus:border-amber focus:shadow-[0_0_0_2px_rgba(240,164,32,0.2)]";
-  const labelClasses = "font-mono text-[0.7rem] font-medium uppercase tracking-[1.2px] text-text-dim";
-  const fieldGroup = "flex flex-col gap-2.5";
-  const unitClasses = "font-mono text-[0.65rem] text-text-dim mt-1";
+  const sectionBox = "bg-surface-1 border border-border rounded-default p-4 mb-4 sm:p-6 sm:mb-6 md:p-8 md:mb-8";
+  const sectionHeading = "font-mono text-xs font-semibold uppercase tracking-widest text-text-dim mb-4";
+  const inputClasses = "bg-background border border-border rounded-sm px-3 py-2.5 text-text font-mono text-sm outline-none transition-all duration-150 w-full resize-y focus:border-amber focus:shadow-[0_0_0_2px_rgba(240,164,32,0.2)]";
+  const labelClasses = "font-mono text-[0.65rem] font-medium uppercase tracking-wider text-text-dim";
+  const fieldGroup = "flex flex-col gap-2";
+  const unitClasses = "font-mono text-[0.6rem] text-text-dim mt-0.5";
 
   const singleTariffFields = (
-    <div className="grid gap-6 grid-cols-3">
+    <div className="grid gap-4 grid-cols-2 sm:grid-cols-3">
       <div className={fieldGroup}>
         <label className={labelClasses}>JT cijena</label>
         <input
@@ -84,7 +84,7 @@ export default function Settings({ config, onSave, onReset }: SettingsProps) {
 
   const dualTariffFields = (
     <>
-      <div className="grid gap-6 grid-cols-4">
+      <div className="grid gap-4 grid-cols-2 sm:grid-cols-4">
         <div className={fieldGroup}>
           <label className={labelClasses}>VT</label>
           <input className={inputClasses} type="number" step="0.000001" value={localConfig.energyPriceHighTariff} onChange={(e) => updateField("energyPriceHighTariff", parseFloat(e.target.value) || 0)} />
@@ -104,14 +104,14 @@ export default function Settings({ config, onSave, onReset }: SettingsProps) {
           </label>
         </div>
       </div>
-      <div className="font-mono text-[0.7rem] text-text-dim leading-normal mt-4">Zima VT 07–21 NT 21–07 | Ljeto VT 08–22 NT 22–08</div>
+      <div className="font-mono text-[0.6rem] text-text-dim leading-normal mt-3">Zima VT 07–21 NT 21–07 | Ljeto VT 08–22 NT 22–08</div>
     </>
   );
 
   const tariffFields = isSingleTariff ? singleTariffFields : dualTariffFields;
 
   const singleTariffNetworkFields = (
-    <div className="grid gap-6 grid-cols-4">
+    <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 md:grid-cols-4">
       <div className={fieldGroup}><label className={labelClasses}>Dist JT</label><input className={inputClasses} type="number" step="0.000001" value={localConfig.distributionSingleTariff} onChange={(e) => updateField("distributionSingleTariff", parseFloat(e.target.value) || 0)} /></div>
       <div className={fieldGroup}><label className={labelClasses}>Prij JT</label><input className={inputClasses} type="number" step="0.000001" value={localConfig.transmissionSingleTariff} onChange={(e) => updateField("transmissionSingleTariff", parseFloat(e.target.value) || 0)} /></div>
       <div className={fieldGroup}><label className={labelClasses}>Mjerna</label><input className={inputClasses} type="number" step="0.001" value={localConfig.meteringFee} onChange={(e) => updateField("meteringFee", parseFloat(e.target.value) || 0)} /></div>
@@ -122,7 +122,7 @@ export default function Settings({ config, onSave, onReset }: SettingsProps) {
   );
 
   const dualTariffNetworkFields = (
-    <div className="grid gap-6 grid-cols-4">
+    <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 md:grid-cols-4">
       <div className={fieldGroup}><label className={labelClasses}>Dist VT</label><input className={inputClasses} type="number" step="0.000001" value={localConfig.distributionHighTariff} onChange={(e) => updateField("distributionHighTariff", parseFloat(e.target.value) || 0)} /></div>
       <div className={fieldGroup}><label className={labelClasses}>Dist NT</label><input className={inputClasses} type="number" step="0.000001" value={localConfig.distributionLowTariff} onChange={(e) => updateField("distributionLowTariff", parseFloat(e.target.value) || 0)} /></div>
       <div className={fieldGroup}><label className={labelClasses}>Prij VT</label><input className={inputClasses} type="number" step="0.000001" value={localConfig.transmissionHighTariff} onChange={(e) => updateField("transmissionHighTariff", parseFloat(e.target.value) || 0)} /></div>
@@ -141,7 +141,7 @@ export default function Settings({ config, onSave, onReset }: SettingsProps) {
     <>
       <div className={sectionBox}>
         <h3 className={sectionHeading}>HEP API</h3>
-        <div className="grid gap-6 grid-cols-2">
+        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
           <div className={fieldGroup}>
             <label className={labelClasses}>Bearer token</label>
             <input className={inputClasses} type="password" value={localConfig.token} onChange={(e) => updateField("token", e.target.value)} placeholder="HEP API token..." autoComplete="off" />
@@ -155,7 +155,7 @@ export default function Settings({ config, onSave, onReset }: SettingsProps) {
 
       <div className={sectionBox}>
         <h3 className={sectionHeading}>FusionSolar (Huawei)</h3>
-        <div className="grid gap-6 grid-cols-2">
+        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
           <div className={fieldGroup}>
             <label className={labelClasses}>Cookie (cijeli string)</label>
             <textarea className={inputClasses} rows={3} value={localConfig.fusionSolarCookie} onChange={(e) => updateField("fusionSolarCookie", e.target.value)} placeholder="JSESSIONID=...;HWWAFSESID=...;SSO_TGC_=..." />
@@ -170,7 +170,7 @@ export default function Settings({ config, onSave, onReset }: SettingsProps) {
 
       <div className={sectionBox}>
         <h3 className={sectionHeading}>Tarifni model</h3>
-        <div className="grid gap-6 grid-cols-3 mb-4">
+        <div className="grid gap-4 grid-cols-1 sm:grid-cols-3 mb-4">
           <div className={fieldGroup}>
             <label className={labelClasses}>Model</label>
             <select className={inputClasses} value={localConfig.tariffModel} onChange={(e) => updateField("tariffModel", e.target.value as "single" | "dual")}>
@@ -187,9 +187,9 @@ export default function Settings({ config, onSave, onReset }: SettingsProps) {
         {networkFields}
       </div>
 
-      <div className="flex gap-5 flex-wrap mt-8">
-        <button className="bg-amber text-background border-none rounded-sm px-10 py-4 font-body text-[0.9rem] font-bold cursor-pointer transition-all duration-[120ms] whitespace-nowrap hover:bg-[#f5b030] hover:-translate-y-[1px] active:translate-y-0" onClick={handleSave}>{saveButtonLabel}</button>
-        <button className="bg-transparent border border-border text-text rounded-sm px-10 py-4 font-body text-[0.9rem] font-bold cursor-pointer transition-all duration-[120ms] whitespace-nowrap hover:border-amber hover:text-amber hover:bg-transparent" onClick={handleReset}>Vrati zadano</button>
+      <div className="flex gap-3 flex-wrap mt-4 sm:mt-6">
+        <button className="bg-amber text-background border-none rounded-sm px-6 py-2.5 font-body text-sm font-bold cursor-pointer transition-all duration-150 whitespace-nowrap hover:bg-[#f5b030] hover:-translate-y-px active:translate-y-0" onClick={handleSave}>{saveButtonLabel}</button>
+        <button className="bg-transparent border border-border text-text rounded-sm px-6 py-2.5 font-body text-sm font-bold cursor-pointer transition-all duration-150 whitespace-nowrap hover:border-amber hover:text-amber hover:bg-transparent" onClick={handleReset}>Vrati zadano</button>
       </div>
     </>
   );

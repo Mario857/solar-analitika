@@ -76,7 +76,7 @@ export default function Cards({
   ];
 
   const getValueClasses = (colorClass: string) => {
-    const base = "font-mono text-[1.4rem] font-bold leading-[1.1]";
+    const base = "font-mono text-xl font-bold leading-tight";
     const color = VALUE_COLOR_MAP[colorClass] || "text-amber";
     return `${base} ${color}`;
   };
@@ -92,17 +92,17 @@ export default function Cards({
   }, [cards.length]);
 
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-4 mb-8">
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-3 mb-6">
       {cards.map((card, index) => {
         const isVisible = index < visibleCount;
         return (
           <div
             key={index}
-            className={`metric-card ${card.colorClass} bg-surface-1 border border-border rounded-default px-6 py-5 opacity-0 translate-y-2 transition-all duration-300 ease-in-out${isVisible ? " opacity-100! translate-y-0!" : ""}`}
+            className={`metric-card ${card.colorClass} bg-surface-1 border border-border rounded-default px-4 py-4 opacity-0 translate-y-2 transition-all duration-300 ease-in-out${isVisible ? " opacity-100! translate-y-0!" : ""}`}
           >
-            <div className="font-mono text-[0.65rem] uppercase tracking-[1.5px] text-text-dim mb-2">{card.label}</div>
+            <div className="font-mono text-[0.6rem] uppercase tracking-widest text-text-dim mb-1.5">{card.label}</div>
             <div className={getValueClasses(card.colorClass)}>{card.value}</div>
-            <div className="font-mono text-[0.72rem] text-text-dim mt-2">{card.subtitle}</div>
+            <div className="font-mono text-[0.65rem] text-text-dim mt-1.5">{card.subtitle}</div>
           </div>
         );
       })}

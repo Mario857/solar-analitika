@@ -52,7 +52,7 @@ export default function MainChart({ sortedDays, dailyData, derived, hasFusionSol
   };
 
   return (
-    <div className="relative w-full min-h-[260px]">
+    <div className="relative w-full min-h-[220px] sm:min-h-[260px]">
       <Bar data={chartData} options={CHART_OPTIONS} />
     </div>
   );

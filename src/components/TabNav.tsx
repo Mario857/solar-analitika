@@ -18,11 +18,11 @@ interface TabNavProps {
 
 export default function TabNav({ activeTab, onTabChange }: TabNavProps) {
   return (
-    <div className="flex gap-3 overflow-x-auto pb-1 scrollbar-hide">
+    <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
       {TABS.map((t) => (
         <button
           key={t.id}
-          className={`font-mono text-[0.85rem] font-medium px-6 py-3.5 rounded-sm border border-border bg-transparent text-text-dim cursor-pointer whitespace-nowrap transition-all duration-150 hover:text-text${activeTab === t.id ? " bg-amber! text-background! border-amber! font-bold!" : ""}`}
+          className={`font-mono text-xs font-medium px-3 py-1.5 rounded-sm border border-border bg-transparent text-text-dim cursor-pointer whitespace-nowrap transition-all duration-150 hover:text-text${activeTab === t.id ? " bg-amber! text-background! border-amber! font-bold!" : ""}`}
           onClick={() => onTabChange(t.id)}
         >
           {t.label}

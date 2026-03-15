@@ -21,7 +21,6 @@ const MIN_HEATMAP_OPACITY = 0.03;
 const HEATMAP_VISIBILITY_THRESHOLD = 0.01;
 
 export default function HourlyProfile({ sortedDays, hourlyData, derived, hasFusionSolar, hasConsumption }: HourlyProfileProps) {
-  // Find max average power for heatmap color scaling
   let maxAveragePower = 0;
   for (const dateKey of sortedDays) {
     for (let hour = 0; hour < HOURS_IN_DAY; hour++) {
@@ -32,7 +31,6 @@ export default function HourlyProfile({ sortedDays, hourlyData, derived, hasFusi
   }
   if (!maxAveragePower) maxAveragePower = 1;
 
-  // Calculate average daily generation and consumption profiles
   const averageGeneration = Array(HOURS_IN_DAY).fill(0);
   const averageConsumption = Array(HOURS_IN_DAY).fill(0);
   const dayCount = sortedDays.length || 1;
@@ -79,7 +77,6 @@ export default function HourlyProfile({ sortedDays, hourlyData, derived, hasFusi
     ],
   };
 
-  // Calculate cumulative production data
   let cumulativeFeedIn = 0;
   let cumulativeConsumed = 0;
   let cumulativeSolarProduction = 0;
@@ -138,10 +135,13 @@ export default function HourlyProfile({ sortedDays, hourlyData, derived, hasFusi
     ],
   };
 
+  const sectionBox = "bg-surface-1 border border-border rounded-default p-4 mb-4 sm:p-6 sm:mb-6 md:p-8 md:mb-8";
+  const sectionHeading = "font-mono text-xs font-semibold uppercase tracking-widest text-text-dim mb-4";
+
   return (
     <>
-      <div className="bg-surface-1 border border-border rounded-default p-8 mb-8">
-        <h3 className="font-mono text-[0.8rem] font-semibold uppercase tracking-[1.5px] text-text-dim mb-5">Toplinska karta — proizvodnja (kW)</h3>
+      <div className={sectionBox}>
+        <h3 className={sectionHeading}>Toplinska karta — proizvodnja (kW)</h3>
         <div className="overflow-x-auto scrollbar-hide">
           <div
             className="grid gap-[2px] min-w-fit"
@@ -178,15 +178,15 @@ export default function HourlyProfile({ sortedDays, hourlyData, derived, hasFusi
           </div>
         </div>
       </div>
-      <div className="bg-surface-1 border border-border rounded-default p-8 mb-8">
-        <h3 className="font-mono text-[0.8rem] font-semibold uppercase tracking-[1.5px] text-text-dim mb-5">Prosječni dnevni profil</h3>
-        <div className="relative w-full min-h-[260px]">
+      <div className={sectionBox}>
+        <h3 className={sectionHeading}>Prosječni dnevni profil</h3>
+        <div className="relative w-full min-h-[220px] sm:min-h-[260px]">
           <Line data={profileChartData} options={CHART_OPTIONS} />
         </div>
       </div>
-      <div className="bg-surface-1 border border-border rounded-default p-8 mb-8">
-        <h3 className="font-mono text-[0.8rem] font-semibold uppercase tracking-[1.5px] text-text-dim mb-5">Kumulativna proizvodnja</h3>
-        <div className="relative w-full min-h-[260px]">
+      <div className={sectionBox}>
+        <h3 className={sectionHeading}>Kumulativna proizvodnja</h3>
+        <div className="relative w-full min-h-[220px] sm:min-h-[260px]">
           <Line data={cumulativeChartData} options={CHART_OPTIONS} />
         </div>
       </div>

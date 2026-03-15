@@ -13,8 +13,8 @@ const LOW_PRODUCTION_THRESHOLD = 0.5;
 
 export default function DataTable({ dailyData, derived, hasFusionSolar, hasConsumption }: DataTableProps) {
   return (
-    <div className="bg-surface-1 border border-border rounded-default p-8 mb-8">
-      <h3 className="font-mono text-[0.8rem] font-semibold uppercase tracking-[1.5px] text-text-dim mb-5">Dnevni pregled</h3>
+    <div className="bg-surface-1 border border-border rounded-default p-4 mb-4 sm:p-6 sm:mb-6 md:p-8 md:mb-8">
+      <h3 className="font-mono text-xs font-semibold uppercase tracking-widest text-text-dim mb-4">Dnevni pregled</h3>
       <div className="max-h-[500px] overflow-y-auto overflow-x-auto scrollbar-hide">
         <table>
           <thead>
