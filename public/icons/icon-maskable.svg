@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Maskable: larger safe zone, no rounded corners -->
+  <rect width="512" height="512" fill="#060a0f"/>
+  <!-- Sun circle (centered, smaller for safe area) -->
+  <circle cx="256" cy="210" r="70" fill="#f0a420"/>
+  <!-- Sun rays -->
+  <g stroke="#f0a420" stroke-width="10" stroke-linecap="round">
+    <line x1="256" y1="112" x2="256" y2="88"/>
+    <line x1="256" y1="308" x2="256" y2="332"/>
+    <line x1="158" y1="210" x2="134" y2="210"/>
+    <line x1="354" y1="210" x2="378" y2="210"/>
+    <line x1="186.7" y1="140.7" x2="169.5" y2="123.5"/>
+    <line x1="325.3" y1="140.7" x2="342.5" y2="123.5"/>
+    <line x1="186.7" y1="279.3" x2="169.5" y2="296.5"/>
+    <line x1="325.3" y1="279.3" x2="342.5" y2="296.5"/>
+  </g>
+  <!-- Chart bars -->
+  <rect x="155" y="370" width="35" height="50" rx="4" fill="#00c896" opacity="0.9"/>
+  <rect x="208" y="352" width="35" height="68" rx="4" fill="#00c896" opacity="0.9"/>
+  <rect x="261" y="334" width="35" height="86" rx="4" fill="#00c896" opacity="0.9"/>
+  <rect x="314" y="358" width="35" height="62" rx="4" fill="#00c896" opacity="0.9"/>
+</svg>

@@ -8,10 +8,7 @@ export default function Header({ meter }: HeaderProps) {
   return (
     <div className="flex items-center justify-between flex-wrap gap-5">
       <div className="flex items-center gap-4">
-        <div className="sun-icon">
-          <div className="pulse-ring" />
-          <div className="sun-core" />
-        </div>
+        <img src="/icons/icon.svg" alt="Solar Analitika" width={40} height={40} className="rounded-lg" />
         <h1 className="text-xl sm:text-2xl font-bold text-text-bright">
           <b className="text-amber">Solar</b> Analitika
         </h1>
