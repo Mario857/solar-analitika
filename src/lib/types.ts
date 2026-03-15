@@ -80,9 +80,19 @@ export interface BillBreakdown {
 export interface Config {
   token: string;
   meter: string;
+  /** HEP portal username for auto-login */
+  hepUsername: string;
+  /** HEP portal password for auto-login */
+  hepPassword: string;
   tariffModel: "single" | "dual";
   fusionSolarCookie: string;
   fusionSolarStation: string;
+  /** FusionSolar web portal username for auto-login */
+  fusionSolarUsername: string;
+  /** FusionSolar web portal password for auto-login */
+  fusionSolarPassword: string;
+  /** FusionSolar portal subdomain (e.g. "uni004eu5") */
+  fusionSolarSubdomain: string;
   /** Single tariff energy price (€/kWh) */
   energyPriceSingleTariff: number;
   /** High tariff energy price (€/kWh) */

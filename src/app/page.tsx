@@ -132,21 +132,53 @@ export default function Home() {
   }
 
   const handleAnalyze = useCallback(async () => {
-    if (!config.token) {
-      setStatus({ text: "HEP token u Postavkama", cls: "err" });
-      return;
-    }
-
     const formattedMonth = formatMonthForApi(selectedMonth);
     setIsLoading(true);
     setHasData(false);
+
+    // Determine HEP token: auto-login if credentials are set, otherwise use manual token
+    let activeHepToken = config.token;
+    const hasHepCredentials = config.hepUsername && config.hepPassword;
+
+    if (hasHepCredentials) {
+      setStatus({ text: "HEP prijava...", cls: "" });
+      try {
+        const loginResponse = await fetch("/api/hep-login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username: config.hepUsername,
+            password: config.hepPassword,
+          }),
+        });
+        const loginResult = await loginResponse.json();
+        if (loginResult.success && loginResult.token) {
+          activeHepToken = loginResult.token;
+          setStatus({ text: "HEP prijava ✓", cls: "" });
+        } else {
+          setStatus({ text: `HEP prijava: ${loginResult.error || "neuspjeh"}`, cls: "err" });
+          setIsLoading(false);
+          return;
+        }
+      } catch (error) {
+        setStatus({ text: `HEP prijava: ${(error as Error).message}`, cls: "err" });
+        setIsLoading(false);
+        return;
+      }
+    }
+
+    if (!activeHepToken) {
+      setStatus({ text: "HEP: unesite korisničke podatke ili token u Postavkama", cls: "err" });
+      setIsLoading(false);
+      return;
+    }
 
     setStatus({ text: "HEP predano (R)...", cls: "" });
     let generationRecords: HEPMeterRecord[];
     let consumptionRecords: HEPMeterRecord[] = [];
 
     try {
-      generationRecords = await fetchHEPData(config.token, config.meter, formattedMonth, "R");
+      generationRecords = await fetchHEPData(activeHepToken, config.meter, formattedMonth, "R");
     } catch (error) {
       setStatus({ text: `HEP gen: ${(error as Error).message}`, cls: "err" });
       setIsLoading(false);
@@ -155,7 +187,7 @@ export default function Home() {
 
     setStatus({ text: `${generationRecords.length} gen. HEP preuzeto (P)...`, cls: "" });
     try {
-      consumptionRecords = await fetchHEPData(config.token, config.meter, formattedMonth, "P");
+      consumptionRecords = await fetchHEPData(activeHepToken, config.meter, formattedMonth, "P");
     } catch {
       consumptionRecords = [];
     }
@@ -166,10 +198,38 @@ export default function Home() {
     let hasFusionSolarData = false;
     let fusionSolarData: Record<string, FusionSolarDay> = {};
 
-    if (config.fusionSolarCookie && config.fusionSolarStation) {
-      setStatus({ text: "FusionSolar...", cls: "" });
+    // Determine FusionSolar cookie: auto-login if credentials are set, otherwise use manual cookie
+    const hasAutoLoginCredentials = config.fusionSolarUsername && config.fusionSolarPassword;
+    let activeFusionSolarCookie = config.fusionSolarCookie;
+
+    if (hasAutoLoginCredentials && config.fusionSolarStation) {
+      setStatus({ text: "FusionSolar prijava...", cls: "" });
       try {
-        const fusionSolarResponse = await fetchFusionSolarData(config.fusionSolarCookie, config.fusionSolarStation, selectedMonth);
+        const loginResponse = await fetch("/api/fs-login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username: config.fusionSolarUsername,
+            password: config.fusionSolarPassword,
+            subdomain: config.fusionSolarSubdomain,
+          }),
+        });
+        const loginResult = await loginResponse.json();
+        if (loginResult.success && loginResult.cookie) {
+          activeFusionSolarCookie = loginResult.cookie;
+          setStatus({ text: "FS prijava ✓", cls: "" });
+        } else {
+          setStatus({ text: `FS prijava: ${loginResult.error || "neuspjeh"}`, cls: "err" });
+        }
+      } catch (error) {
+        setStatus({ text: `FS prijava: ${(error as Error).message}`, cls: "err" });
+      }
+    }
+
+    if (activeFusionSolarCookie && config.fusionSolarStation) {
+      setStatus({ text: "FusionSolar podaci...", cls: "" });
+      try {
+        const fusionSolarResponse = await fetchFusionSolarData(activeFusionSolarCookie, config.fusionSolarStation, selectedMonth);
         fusionSolarData = parseFusionSolarResponse(fusionSolarResponse, selectedMonth);
         hasFusionSolarData = Object.keys(fusionSolarData).length > 0;
         const statusText = hasFusionSolarData ? "FS ✓" : "FS: no daily data found";

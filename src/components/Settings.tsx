@@ -140,32 +140,58 @@ export default function Settings({ config, onSave, onReset }: SettingsProps) {
   return (
     <>
       <div className={sectionBox}>
-        <h3 className={sectionHeading}>HEP API</h3>
-        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
+        <h3 className={sectionHeading}>HEP Mjerenja</h3>
+        <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
           <div className={fieldGroup}>
-            <label className={labelClasses}>Bearer token</label>
-            <input className={inputClasses} type="password" value={localConfig.token} onChange={(e) => updateField("token", e.target.value)} placeholder="HEP API token..." autoComplete="off" />
+            <label className={labelClasses}>Korisničko ime</label>
+            <input className={inputClasses} type="text" value={localConfig.hepUsername} onChange={(e) => updateField("hepUsername", e.target.value)} placeholder="mjerenje.hep.hr korisnik" autoComplete="off" />
+          </div>
+          <div className={fieldGroup}>
+            <label className={labelClasses}>Lozinka</label>
+            <input className={inputClasses} type="password" value={localConfig.hepPassword} onChange={(e) => updateField("hepPassword", e.target.value)} placeholder="mjerenje.hep.hr lozinka" autoComplete="off" />
           </div>
           <div className={fieldGroup}>
             <label className={labelClasses}>Broj mjernog mjesta</label>
             <input className={inputClasses} type="text" value={localConfig.meter} onChange={(e) => updateField("meter", e.target.value)} />
           </div>
         </div>
+        <details className="mt-3">
+          <summary className={`${labelClasses} cursor-pointer hover:text-amber`}>Ručni Bearer token (alternativa)</summary>
+          <div className="mt-2">
+            <input className={inputClasses} type="password" value={localConfig.token} onChange={(e) => updateField("token", e.target.value)} placeholder="HEP API token..." autoComplete="off" />
+            <span className={unitClasses}>Koristite ako auto-prijava ne radi</span>
+          </div>
+        </details>
       </div>
 
       <div className={sectionBox}>
         <h3 className={sectionHeading}>FusionSolar (Huawei)</h3>
         <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
           <div className={fieldGroup}>
-            <label className={labelClasses}>Cookie (cijeli string)</label>
-            <textarea className={inputClasses} rows={3} value={localConfig.fusionSolarCookie} onChange={(e) => updateField("fusionSolarCookie", e.target.value)} placeholder="JSESSIONID=...;HWWAFSESID=...;SSO_TGC_=..." />
+            <label className={labelClasses}>Korisničko ime</label>
+            <input className={inputClasses} type="text" value={localConfig.fusionSolarUsername} onChange={(e) => updateField("fusionSolarUsername", e.target.value)} placeholder="FusionSolar email ili korisnik" autoComplete="off" />
+          </div>
+          <div className={fieldGroup}>
+            <label className={labelClasses}>Lozinka</label>
+            <input className={inputClasses} type="password" value={localConfig.fusionSolarPassword} onChange={(e) => updateField("fusionSolarPassword", e.target.value)} placeholder="FusionSolar lozinka" autoComplete="off" />
           </div>
           <div className={fieldGroup}>
             <label className={labelClasses}>Station DN</label>
             <input className={inputClasses} type="text" value={localConfig.fusionSolarStation} onChange={(e) => updateField("fusionSolarStation", e.target.value)} />
-            <span className={unitClasses}>API proxy ugrađen u Next.js — nije potreban zasebni proxy.py</span>
+          </div>
+          <div className={fieldGroup}>
+            <label className={labelClasses}>Subdomena</label>
+            <input className={inputClasses} type="text" value={localConfig.fusionSolarSubdomain} onChange={(e) => updateField("fusionSolarSubdomain", e.target.value)} placeholder="uni004eu5" />
+            <span className={unitClasses}>Prefiks iz FusionSolar URL-a</span>
           </div>
         </div>
+        <details className="mt-3">
+          <summary className={`${labelClasses} cursor-pointer hover:text-amber`}>Ručni cookie (alternativa)</summary>
+          <div className="mt-2">
+            <textarea className={inputClasses} rows={2} value={localConfig.fusionSolarCookie} onChange={(e) => updateField("fusionSolarCookie", e.target.value)} placeholder="JSESSIONID=...;HWWAFSESID=...;SSO_TGC_=..." />
+            <span className={unitClasses}>Koristite ako auto-prijava ne radi</span>
+          </div>
+        </details>
       </div>
 
       <div className={sectionBox}>
