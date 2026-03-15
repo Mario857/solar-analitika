@@ -22,6 +22,8 @@ export const DEFAULTS: Config = {
   solidarityDiscount: true,
   renewableEnergyRate: 0.013239,
   vatRate: 0.13,
+  systemCostEur: 0,
+  installationDate: "",
 };
 
 const STORAGE_KEY = "solar4";

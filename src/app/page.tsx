@@ -19,6 +19,7 @@ import {
   calculateBillWithoutSolar,
   formatMonthForApi,
   analyzeLoadShifting,
+  calculateRoi,
 } from "@/lib/calculations";
 import Header from "@/components/Header";
 import TabNav from "@/components/TabNav";
@@ -32,9 +33,10 @@ import HourlyProfile from "@/components/HourlyProfile";
 import BillPanel from "@/components/BillPanel";
 import DataTable from "@/components/DataTable";
 import LoadShiftInsights from "@/components/LoadShiftInsights";
+import RoiCalculator from "@/components/RoiCalculator";
 import Settings from "@/components/Settings";
 
-type TabId = "dash" | "energy" | "hourly" | "optimize" | "bill" | "table" | "settings";
+type TabId = "dash" | "energy" | "hourly" | "optimize" | "roi" | "bill" | "table" | "settings";
 
 const INITIAL_MONTH_COUNT = 6;
 
@@ -285,6 +287,11 @@ export default function Home() {
     ? analyzeLoadShifting(sortedDays, hourlyDataRef.current, config)
     : null;
 
+  const measuredSavings = bill && billWithoutSolar ? billWithoutSolar - bill.total : 0;
+  const roiAnalysis = hasData && hasConsumption && measuredSavings > 0 && config.systemCostEur > 0
+    ? calculateRoi(measuredSavings, selectedMonth, config.systemCostEur, config.installationDate)
+    : null;
+
   const statusColorClass = STATUS_COLOR_MAP[status.cls] || "text-text-dim";
 
   const sectionBox = "bg-surface-1 border border-border rounded-default p-4 mb-4 sm:p-6 sm:mb-6 md:p-8 md:mb-8";
@@ -385,6 +392,27 @@ export default function Home() {
           <div className={sectionBox}>
             <h3 className={sectionHeading}>Optimizacija potrošnje</h3>
             <p className={noteText}>{hasData ? "Potrebni podaci preuzete energije." : "Pokrenite analizu."}</p>
+          </div>
+        )}
+      </div>
+      <div className={activeTab === "roi" ? "block" : "hidden"}>
+        {roiAnalysis ? (
+          <RoiCalculator
+            analysis={roiAnalysis}
+            systemCostEur={config.systemCostEur}
+            selectedMonth={selectedMonth}
+            hasInstallationDate={!!config.installationDate}
+          />
+        ) : (
+          <div className={sectionBox}>
+            <h3 className={sectionHeading}>ROI — Povrat investicije</h3>
+            <p className={noteText}>
+              {!hasData
+                ? "Pokrenite analizu."
+                : config.systemCostEur <= 0
+                  ? "Unesite cijenu sustava u Postavkama."
+                  : "Potrebni podaci preuzete energije i ušteda > 0 €."}
+            </p>
           </div>
         )}
       </div>

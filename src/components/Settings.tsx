@@ -201,6 +201,35 @@ export default function Settings({ config, credentials, onSave, onReset, onCrede
       </div>
 
       <div className={sectionBox}>
+        <h3 className={sectionHeading}>Solarni sustav</h3>
+        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
+          <div className={fieldGroup}>
+            <label className={labelClasses}>Cijena sustava (s instalacijom)</label>
+            <input
+              className={inputClasses}
+              type="number"
+              step="100"
+              min="0"
+              value={localConfig.systemCostEur || ""}
+              onChange={(e) => updateField("systemCostEur", parseFloat(e.target.value) || 0)}
+              placeholder="npr. 7500"
+            />
+            <span className={unitClasses}>€ — ukupna investicija za ROI izračun</span>
+          </div>
+          <div className={fieldGroup}>
+            <label className={labelClasses}>Datum instalacije</label>
+            <input
+              className={inputClasses}
+              type="date"
+              value={localConfig.installationDate}
+              onChange={(e) => updateField("installationDate", e.target.value)}
+            />
+            <span className={unitClasses}>Za praćenje napretka otplate</span>
+          </div>
+        </div>
+      </div>
+
+      <div className={sectionBox}>
         <h3 className={sectionHeading}>Tarifni model</h3>
         <div className="grid gap-4 grid-cols-1 sm:grid-cols-3 mb-4">
           <div className={fieldGroup}>

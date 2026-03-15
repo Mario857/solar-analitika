@@ -115,6 +115,10 @@ export interface Config {
   renewableEnergyRate: number;
   /** VAT rate (e.g., 0.13 = 13%) */
   vatRate: number;
+  /** Total solar system cost including installation (€) */
+  systemCostEur: number;
+  /** Installation date in ISO format (YYYY-MM-DD) */
+  installationDate: string;
 }
 
 /** Session-only credentials — never persisted to localStorage */
@@ -151,6 +155,34 @@ export interface LoadShiftAnalysis {
   peakGridConsumptionHours: number[];
   /** Estimated monthly savings if shiftable load is moved to solar hours (€) */
   estimatedMonthlySavingsEur: number;
+}
+
+/** ROI projection for a single month */
+export interface RoiMonthProjection {
+  /** Month label (e.g. "2025-03") */
+  label: string;
+  /** Estimated savings for this month (€) */
+  monthlySavingsEur: number;
+  /** Cumulative savings up to and including this month (€) */
+  cumulativeSavingsEur: number;
+}
+
+/** Full ROI analysis result */
+export interface RoiAnalysis {
+  /** Monthly savings from the analyzed month (€) */
+  measuredMonthlySavingsEur: number;
+  /** Estimated annual savings based on seasonal weighting (€) */
+  estimatedAnnualSavingsEur: number;
+  /** Months until system cost is recovered */
+  paybackMonths: number;
+  /** Annual return on investment (%) */
+  annualRoiPercent: number;
+  /** Months elapsed since installation */
+  monthsElapsed: number;
+  /** Estimated cumulative savings since installation (€) */
+  estimatedCumulativeSavingsEur: number;
+  /** Monthly projection series for chart (past + future until payback or 25 years) */
+  projections: RoiMonthProjection[];
 }
 
 /** Raw HEP API meter reading record */

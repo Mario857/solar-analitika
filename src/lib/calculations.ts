@@ -9,6 +9,8 @@ import {
   MonthSelection,
   LoadShiftAnalysis,
   HourlyLoadShiftProfile,
+  RoiAnalysis,
+  RoiMonthProjection,
 } from "@/lib/types";
 
 const HOURS_IN_DAY = 24;
@@ -458,5 +460,103 @@ export function analyzeLoadShifting(
     bestHoursForLoad,
     peakGridConsumptionHours,
     estimatedMonthlySavingsEur,
+  };
+}
+
+/**
+ * Seasonal solar production weights relative to annual average.
+ * Based on typical Croatian solar irradiance distribution.
+ * Index 0 = January, 11 = December. Weights sum to 12.0.
+ */
+const SEASONAL_WEIGHTS = [0.4, 0.55, 0.85, 1.1, 1.35, 1.5, 1.55, 1.4, 1.15, 0.85, 0.5, 0.3];
+const MONTHS_IN_YEAR = 12;
+const MAX_PROJECTION_YEARS = 25;
+const MAX_PROJECTION_MONTHS = MAX_PROJECTION_YEARS * MONTHS_IN_YEAR;
+
+/**
+ * Calculate ROI and payback projections based on measured monthly savings
+ * and seasonal weighting for Croatian solar conditions.
+ */
+export function calculateRoi(
+  measuredMonthlySavingsEur: number,
+  selectedMonth: MonthSelection,
+  systemCostEur: number,
+  installationDate: string
+): RoiAnalysis {
+  /* Derive base monthly savings (seasonally normalized) */
+  const monthIndex = selectedMonth.month - 1;
+  const currentSeasonalWeight = SEASONAL_WEIGHTS[monthIndex];
+  /* Normalize measured savings to an "average month" baseline */
+  const normalizedMonthlySavings = currentSeasonalWeight > 0
+    ? measuredMonthlySavingsEur / currentSeasonalWeight
+    : measuredMonthlySavingsEur;
+
+  /* Estimated annual savings using seasonal distribution */
+  let estimatedAnnualSavingsEur = 0;
+  for (let i = 0; i < MONTHS_IN_YEAR; i++) {
+    estimatedAnnualSavingsEur += normalizedMonthlySavings * SEASONAL_WEIGHTS[i];
+  }
+
+  /* Average monthly savings for payback calculation */
+  const averageMonthlySavings = estimatedAnnualSavingsEur / MONTHS_IN_YEAR;
+  const paybackMonths = averageMonthlySavings > 0
+    ? Math.ceil(systemCostEur / averageMonthlySavings)
+    : 0;
+
+  const annualRoiPercent = systemCostEur > 0
+    ? (estimatedAnnualSavingsEur / systemCostEur) * 100
+    : 0;
+
+  /* Calculate months elapsed since installation */
+  let monthsElapsed = 0;
+  let estimatedCumulativeSavingsEur = 0;
+  if (installationDate) {
+    const installDate = new Date(installationDate);
+    const now = new Date(selectedMonth.year, selectedMonth.month - 1, 1);
+    monthsElapsed = (now.getFullYear() - installDate.getFullYear()) * MONTHS_IN_YEAR
+      + (now.getMonth() - installDate.getMonth());
+    if (monthsElapsed < 0) monthsElapsed = 0;
+
+    /* Estimate cumulative savings from installation to now using seasonal weights */
+    for (let i = 0; i < monthsElapsed; i++) {
+      const projectedMonth = new Date(installDate.getFullYear(), installDate.getMonth() + i, 1);
+      const weight = SEASONAL_WEIGHTS[projectedMonth.getMonth()];
+      estimatedCumulativeSavingsEur += normalizedMonthlySavings * weight;
+    }
+  }
+
+  /* Build projection series: from installation month until payback (or max 25 years) */
+  const projections: RoiMonthProjection[] = [];
+  const startDate = installationDate
+    ? new Date(installationDate)
+    : new Date(selectedMonth.year, selectedMonth.month - 1, 1);
+  const projectionLength = Math.min(
+    Math.max(paybackMonths + MONTHS_IN_YEAR, monthsElapsed + MONTHS_IN_YEAR * 2),
+    MAX_PROJECTION_MONTHS
+  );
+
+  let cumulative = 0;
+  for (let i = 0; i < projectionLength; i++) {
+    const projectedDate = new Date(startDate.getFullYear(), startDate.getMonth() + i, 1);
+    const weight = SEASONAL_WEIGHTS[projectedDate.getMonth()];
+    const monthlySavings = normalizedMonthlySavings * weight;
+    cumulative += monthlySavings;
+
+    const label = `${projectedDate.getFullYear()}-${String(projectedDate.getMonth() + 1).padStart(2, "0")}`;
+    projections.push({
+      label,
+      monthlySavingsEur: monthlySavings,
+      cumulativeSavingsEur: cumulative,
+    });
+  }
+
+  return {
+    measuredMonthlySavingsEur,
+    estimatedAnnualSavingsEur,
+    paybackMonths,
+    annualRoiPercent,
+    monthsElapsed,
+    estimatedCumulativeSavingsEur,
+    projections,
   };
 }
