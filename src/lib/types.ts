@@ -286,6 +286,26 @@ export interface MonthSummary {
   savingsEur: number;
 }
 
+/** Tariff model comparison result */
+export interface TariffComparison {
+  /** Bill under single tariff (JT) with solar */
+  singleTariffBill: BillBreakdown;
+  /** Bill under dual tariff (VT/NT) with solar */
+  dualTariffBill: BillBreakdown;
+  /** Bill under single tariff without solar */
+  singleTariffBillWithoutSolar: number;
+  /** Bill under dual tariff without solar */
+  dualTariffBillWithoutSolar: number;
+  /** Savings from solar under single tariff */
+  singleTariffSolarSavings: number;
+  /** Savings from solar under dual tariff */
+  dualTariffSolarSavings: number;
+  /** Which tariff model is cheaper with solar: "single" or "dual" */
+  cheaperWithSolar: "single" | "dual";
+  /** How much cheaper the better model is (€) */
+  savingsDifference: number;
+}
+
 /** Battery simulation configuration */
 export interface BatteryConfig {
   /** Battery capacity in kWh */

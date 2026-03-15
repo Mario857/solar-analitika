@@ -1,6 +1,7 @@
 import {
   Config,
   TariffPrices,
+  TariffComparison,
   CachedMonthData,
   DailyEnergyData,
   FusionSolarDay,
@@ -353,6 +354,41 @@ export function calculateBillWithoutSolar(
   const solidarityCost = tariff.solidarityDiscount ? 0 : totalKwh * tariff.solidarityRate;
   const subtotal = energyCost + networkCost + solidarityCost + totalKwh * tariff.renewableEnergyRate + tariff.supplyFee + tariff.meteringFee;
   return subtotal + subtotal * tariff.vatRate;
+}
+
+/**
+ * Compare bills under single (JT) vs dual (VT/NT) tariff models,
+ * both with and without solar, using the same underlying price data.
+ */
+export function compareTariffModels(
+  sortedDays: string[],
+  dailyData: Record<string, DailyEnergyData>,
+  tariff: TariffPrices
+): TariffComparison {
+  const singleTariff: TariffPrices = { ...tariff, tariffModel: "single" };
+  const dualTariff: TariffPrices = { ...tariff, tariffModel: "dual" };
+
+  const singleTariffBill = calculateBill(sortedDays, dailyData, singleTariff);
+  const dualTariffBill = calculateBill(sortedDays, dailyData, dualTariff);
+  const singleTariffBillWithoutSolar = calculateBillWithoutSolar(sortedDays, dailyData, singleTariff);
+  const dualTariffBillWithoutSolar = calculateBillWithoutSolar(sortedDays, dailyData, dualTariff);
+
+  const singleTariffSolarSavings = singleTariffBillWithoutSolar - singleTariffBill.total;
+  const dualTariffSolarSavings = dualTariffBillWithoutSolar - dualTariffBill.total;
+
+  const cheaperWithSolar = singleTariffBill.total <= dualTariffBill.total ? "single" : "dual";
+  const savingsDifference = Math.abs(singleTariffBill.total - dualTariffBill.total);
+
+  return {
+    singleTariffBill,
+    dualTariffBill,
+    singleTariffBillWithoutSolar,
+    dualTariffBillWithoutSolar,
+    singleTariffSolarSavings,
+    dualTariffSolarSavings,
+    cheaperWithSolar,
+    savingsDifference,
+  };
 }
 
 const SOLAR_PRODUCTION_THRESHOLD_KW = 0.1;

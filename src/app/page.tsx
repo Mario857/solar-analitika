@@ -20,6 +20,7 @@ import {
   calculateBillWithoutSolar,
   formatMonthForApi,
   analyzeLoadShifting,
+  compareTariffModels,
   calculateRoi,
   calculateForecast,
   aggregateHourlyRadiationToDaily,
@@ -46,6 +47,7 @@ import Settings from "@/components/Settings";
 import Donate from "@/components/Donate";
 import ShareButton from "@/components/ShareButton";
 import BatterySimulator from "@/components/BatterySimulator";
+import TariffComparisonPanel from "@/components/TariffComparison";
 
 type TabId = "dash" | "yearly" | "energy" | "hourly" | "optimize" | "battery" | "roi" | "bill" | "table" | "settings";
 
@@ -447,6 +449,9 @@ export default function Home() {
   const loadShiftAnalysis = hasData && hasConsumption
     ? analyzeLoadShifting(sortedDays, hourlyDataRef.current, activeTariff)
     : null;
+  const tariffComparison = hasData && hasConsumption
+    ? compareTariffModels(sortedDays, dailyDataRef.current, activeTariff)
+    : null;
 
   const forecast = hasData && derived
     ? calculateForecast(selectedMonth, derived, bill, billWithoutSolar, hasFusionSolar, weatherScaleFactors)
@@ -512,9 +517,14 @@ export default function Home() {
   );
 
   const billContent = hasData && hasConsumption && bill ? (
-    <div id="share-bill">
-      <BillPanel sortedDays={sortedDays} dailyData={dailyDataRef.current} bill={bill} billWithoutSolar={billWithoutSolar!} tariff={activeTariff} />
-    </div>
+    <>
+      <div id="share-bill">
+        <BillPanel sortedDays={sortedDays} dailyData={dailyDataRef.current} bill={bill} billWithoutSolar={billWithoutSolar!} tariff={activeTariff} />
+      </div>
+      {tariffComparison && (
+        <TariffComparisonPanel comparison={tariffComparison} activeTariffModel={activeTariff.tariffModel} />
+      )}
+    </>
   ) : (
     <div className={sectionBox}>
       <h3 className={sectionHeading}>Procjena računa</h3>
