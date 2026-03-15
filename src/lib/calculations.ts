@@ -5,12 +5,14 @@ import {
   FusionSolarDay,
   DerivedMonthlyData,
   BillBreakdown,
+  ForecastDayEntry,
   HEPMeterRecord,
   HourlySample,
-  MonthSelection,
-  MonthSummary,
   LoadShiftAnalysis,
   HourlyLoadShiftProfile,
+  MonthForecast,
+  MonthSelection,
+  MonthSummary,
   RoiAnalysis,
   RoiMonthProjection,
 } from "@/lib/types";
@@ -594,5 +596,119 @@ export function computeMonthSummary(
     billTotalEur: bill?.total ?? 0,
     billWithoutSolarEur: billWithoutSolar,
     savingsEur: bill ? billWithoutSolar - bill.total : 0,
+  };
+}
+
+/** Minimum analyzed days required to make a meaningful forecast */
+const MIN_FORECAST_DAYS = 3;
+/** Low-production day threshold — excluded from forecast average to avoid skewing */
+const FORECAST_LOW_PRODUCTION_THRESHOLD = 0.3;
+
+/**
+ * Project remaining days of a partial month based on analyzed data.
+ * Uses average daily values from productive days (excludes near-zero days)
+ * to estimate month-end totals.
+ */
+export function calculateForecast(
+  selectedMonth: MonthSelection,
+  derived: DerivedMonthlyData,
+  bill: BillBreakdown | null,
+  billWithoutSolar: number | null,
+  hasFusionSolar: boolean
+): MonthForecast | null {
+  const totalDaysInMonth = new Date(selectedMonth.year, selectedMonth.month, 0).getDate();
+
+  /* HEP data is delayed — today's readings are incomplete, so exclude today.
+     Also filter out zero-value records for future days returned by the API. */
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const activeDays = derived.days.filter(
+    (day) => day.date !== todayStr && (day.feedIn > 0 || day.consumed > 0 || day.solarProduction > 0)
+  );
+  const analyzedDays = activeDays.length;
+  const remainingDays = totalDaysInMonth - analyzedDays;
+
+  /* Only forecast partial months with enough data */
+  if (remainingDays <= 0 || analyzedDays < MIN_FORECAST_DAYS) return null;
+
+  /* Filter out near-zero production days (cloudy/rain) for a more realistic average */
+  const productiveDays = hasFusionSolar
+    ? activeDays.filter((day) => day.solarProduction > FORECAST_LOW_PRODUCTION_THRESHOLD)
+    : activeDays.filter((day) => day.feedIn > FORECAST_LOW_PRODUCTION_THRESHOLD);
+  /* Fall back to all active days if most are low-production */
+  const forecastBasis = productiveDays.length >= MIN_FORECAST_DAYS ? productiveDays : activeDays;
+  const basisCount = forecastBasis.length;
+
+  const averageDailyProductionKwh = hasFusionSolar
+    ? forecastBasis.reduce((sum, day) => sum + day.solarProduction, 0) / basisCount
+    : 0;
+  const averageDailyFeedInKwh = forecastBasis.reduce((sum, day) => sum + day.feedIn, 0) / basisCount;
+  const averageDailyConsumedKwh = forecastBasis.reduce((sum, day) => sum + day.consumed, 0) / basisCount;
+  const averageDailySelfConsumedKwh = hasFusionSolar
+    ? forecastBasis.reduce((sum, day) => sum + day.selfConsumed, 0) / basisCount
+    : 0;
+
+  /* Project totals */
+  const projectedProductionKwh = derived.totalSolarProduction + averageDailyProductionKwh * remainingDays;
+  const projectedFeedInKwh = derived.totalFeedIn + averageDailyFeedInKwh * remainingDays;
+  const projectedConsumedKwh = derived.totalConsumed + averageDailyConsumedKwh * remainingDays;
+  const projectedSelfConsumedKwh = derived.totalSelfConsumed + averageDailySelfConsumedKwh * remainingDays;
+  const projectedHousehold = projectedConsumedKwh + projectedSelfConsumedKwh;
+  const projectedSelfSufficiencyPercent = projectedHousehold > 0
+    ? (projectedSelfConsumedKwh / projectedHousehold) * 100
+    : 0;
+
+  /* Project bill — scale from analyzed portion */
+  let projectedBillEur = 0;
+  let projectedSavingsEur = 0;
+  if (bill && billWithoutSolar !== null) {
+    const scaleFactor = totalDaysInMonth / analyzedDays;
+    projectedBillEur = bill.total * scaleFactor;
+    projectedSavingsEur = (billWithoutSolar - bill.total) * scaleFactor;
+  }
+
+  /* Build daily chart series: active days as "actual", remaining as "projected" */
+  const dailySeries: ForecastDayEntry[] = [];
+
+  for (const day of activeDays) {
+    dailySeries.push({
+      dayLabel: day.date.slice(8),
+      actualProductionKwh: hasFusionSolar ? day.solarProduction : null,
+      actualFeedInKwh: day.feedIn,
+      actualConsumedKwh: day.consumed,
+      projectedProductionKwh: null,
+      projectedFeedInKwh: null,
+      projectedConsumedKwh: null,
+    });
+  }
+
+  for (let dayOffset = 1; dayOffset <= remainingDays; dayOffset++) {
+    const dayNumber = analyzedDays + dayOffset;
+    dailySeries.push({
+      dayLabel: String(dayNumber).padStart(2, "0"),
+      actualProductionKwh: null,
+      actualFeedInKwh: null,
+      actualConsumedKwh: null,
+      projectedProductionKwh: hasFusionSolar ? averageDailyProductionKwh : null,
+      projectedFeedInKwh: averageDailyFeedInKwh,
+      projectedConsumedKwh: averageDailyConsumedKwh,
+    });
+  }
+
+  return {
+    analyzedDays,
+    totalDaysInMonth,
+    remainingDays,
+    averageDailyProductionKwh,
+    averageDailyFeedInKwh,
+    averageDailyConsumedKwh,
+    averageDailySelfConsumedKwh,
+    projectedProductionKwh,
+    projectedFeedInKwh,
+    projectedConsumedKwh,
+    projectedSelfConsumedKwh,
+    projectedSelfSufficiencyPercent,
+    projectedBillEur,
+    projectedSavingsEur,
+    dailySeries,
   };
 }

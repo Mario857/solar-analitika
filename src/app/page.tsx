@@ -21,6 +21,7 @@ import {
   formatMonthForApi,
   analyzeLoadShifting,
   calculateRoi,
+  calculateForecast,
   toMonthPrefix,
 } from "@/lib/calculations";
 import { getCachedMonth, setCachedMonth } from "@/lib/cache";
@@ -38,6 +39,7 @@ import DataTable from "@/components/DataTable";
 import LoadShiftInsights from "@/components/LoadShiftInsights";
 import RoiCalculator from "@/components/RoiCalculator";
 import YearlyOverview from "@/components/YearlyOverview";
+import ProductionForecast from "@/components/ProductionForecast";
 import Settings from "@/components/Settings";
 
 type TabId = "dash" | "yearly" | "energy" | "hourly" | "optimize" | "roi" | "bill" | "table" | "settings";
@@ -386,6 +388,10 @@ export default function Home() {
     ? analyzeLoadShifting(sortedDays, hourlyDataRef.current, config)
     : null;
 
+  const forecast = hasData && derived
+    ? calculateForecast(selectedMonth, derived, bill, billWithoutSolar, hasFusionSolar)
+    : null;
+
   const measuredSavings = bill && billWithoutSolar ? billWithoutSolar - bill.total : 0;
   const roiAnalysis = hasData && hasConsumption && measuredSavings > 0 && config.systemCostEur > 0
     ? calculateRoi(measuredSavings, selectedMonth, config.systemCostEur, config.installationDate)
@@ -410,6 +416,7 @@ export default function Home() {
         hasFusionSolar={hasFusionSolar}
         hasConsumption={hasConsumption}
       />
+      {forecast && <ProductionForecast forecast={forecast} hasFusionSolar={hasFusionSolar} />}
       <div className={sectionBox}>
         <h3 className={sectionHeading}>Dnevni pregled — svi izvori</h3>
         <MainChart sortedDays={sortedDays} dailyData={dailyDataRef.current} derived={derived} hasFusionSolar={hasFusionSolar} hasConsumption={hasConsumption} />

@@ -185,6 +185,51 @@ export interface RoiAnalysis {
   projections: RoiMonthProjection[];
 }
 
+/** Production forecast for a partial month */
+export interface MonthForecast {
+  /** Number of days with actual data */
+  analyzedDays: number;
+  /** Total days in the month */
+  totalDaysInMonth: number;
+  /** Remaining days to project */
+  remainingDays: number;
+  /** Average daily production from analyzed days (kWh) */
+  averageDailyProductionKwh: number;
+  /** Average daily feed-in from analyzed days (kWh) */
+  averageDailyFeedInKwh: number;
+  /** Average daily consumption from analyzed days (kWh) */
+  averageDailyConsumedKwh: number;
+  /** Average daily self-consumption from analyzed days (kWh) */
+  averageDailySelfConsumedKwh: number;
+  /** Projected month-end total production (kWh) */
+  projectedProductionKwh: number;
+  /** Projected month-end total feed-in (kWh) */
+  projectedFeedInKwh: number;
+  /** Projected month-end total consumption (kWh) */
+  projectedConsumedKwh: number;
+  /** Projected month-end total self-consumption (kWh) */
+  projectedSelfConsumedKwh: number;
+  /** Projected month-end self-sufficiency (%) */
+  projectedSelfSufficiencyPercent: number;
+  /** Projected month-end bill (€) — estimated using daily average rate */
+  projectedBillEur: number;
+  /** Projected month-end savings (€) */
+  projectedSavingsEur: number;
+  /** Per-day values for chart: actual days + projected days */
+  dailySeries: ForecastDayEntry[];
+}
+
+/** Single day entry in the forecast chart series */
+export interface ForecastDayEntry {
+  dayLabel: string;
+  actualProductionKwh: number | null;
+  actualFeedInKwh: number | null;
+  actualConsumedKwh: number | null;
+  projectedProductionKwh: number | null;
+  projectedFeedInKwh: number | null;
+  projectedConsumedKwh: number | null;
+}
+
 /** Cached monthly analysis result stored in IndexedDB */
 export interface CachedMonthData {
   /** Cache key: "YYYY-MM" */
