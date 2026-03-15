@@ -127,6 +127,8 @@ export interface Config extends TariffPrices {
   fusionSolarStation: string;
   /** FusionSolar portal subdomain (e.g. "uni004eu5") */
   fusionSolarSubdomain: string;
+  /** Installed solar panel capacity in kilo-watt peak */
+  installedKwp: number;
   /** Total solar system cost including installation (€) */
   systemCostEur: number;
   /** Installation date in ISO format (YYYY-MM-DD) */
@@ -284,6 +286,33 @@ export interface MonthSummary {
   billTotalEur: number;
   billWithoutSolarEur: number;
   savingsEur: number;
+}
+
+/** System efficiency analysis comparing actual vs theoretical production */
+export interface SystemEfficiency {
+  /** Overall performance ratio for the month (%) */
+  performanceRatioPercent: number;
+  /** Total actual production (kWh) */
+  actualProductionKwh: number;
+  /** Total theoretical max production (kWh) based on kWp and GHI */
+  theoreticalProductionKwh: number;
+  /** Per-day efficiency data points */
+  dailyEfficiency: DailyEfficiency[];
+  /** Average daily peak sun hours for the month */
+  averagePeakSunHours: number;
+  /** Specific yield: kWh produced per kWp installed */
+  specificYieldKwhPerKwp: number;
+  /** Health status based on PR: "excellent" | "good" | "fair" | "poor" */
+  healthStatus: "excellent" | "good" | "fair" | "poor";
+}
+
+/** Per-day efficiency data point */
+export interface DailyEfficiency {
+  date: string;
+  actualKwh: number;
+  theoreticalKwh: number;
+  performanceRatioPercent: number;
+  peakSunHours: number;
 }
 
 /** Tariff model comparison result */

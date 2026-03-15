@@ -2,6 +2,8 @@ import {
   Config,
   TariffPrices,
   TariffComparison,
+  SystemEfficiency,
+  DailyEfficiency,
   CachedMonthData,
   DailyEnergyData,
   FusionSolarDay,
@@ -388,6 +390,81 @@ export function compareTariffModels(
     dualTariffSolarSavings,
     cheaperWithSolar,
     savingsDifference,
+  };
+}
+
+/**
+ * Calculate system efficiency by comparing actual production against
+ * theoretical maximum based on installed kWp and solar irradiance (GHI).
+ *
+ * Theoretical kWh = kWp × Peak Sun Hours (PSH)
+ * PSH = daily GHI (Wh/m²) / 1000
+ * Performance Ratio (PR) = Actual / Theoretical × 100%
+ */
+export function calculateSystemEfficiency(
+  derived: DerivedMonthlyData,
+  weatherRadiation: WeatherDayRadiation[],
+  installedKwp: number
+): SystemEfficiency | null {
+  if (installedKwp <= 0 || weatherRadiation.length === 0) return null;
+
+  /* Build a lookup from date to GHI */
+  const ghiByDate = new Map<string, number>();
+  for (const wr of weatherRadiation) {
+    ghiByDate.set(wr.date, wr.dailyGhiWh);
+  }
+
+  const dailyEfficiency: DailyEfficiency[] = [];
+  let totalActualKwh = 0;
+  let totalTheoreticalKwh = 0;
+
+  for (const day of derived.days) {
+    const ghiWh = ghiByDate.get(day.date);
+    if (ghiWh === undefined || ghiWh <= 0) continue;
+
+    /* Use solar production if available (FusionSolar), else feed-in as proxy */
+    const actualKwh = day.solarProduction > 0 ? day.solarProduction : day.feedIn;
+    if (actualKwh <= 0) continue;
+
+    const peakSunHours = ghiWh / 1000;
+    const theoreticalKwh = installedKwp * peakSunHours;
+    const pr = theoreticalKwh > 0 ? (actualKwh / theoreticalKwh) * 100 : 0;
+
+    dailyEfficiency.push({
+      date: day.date,
+      actualKwh,
+      theoreticalKwh,
+      performanceRatioPercent: Math.min(pr, 150),
+      peakSunHours,
+    });
+
+    totalActualKwh += actualKwh;
+    totalTheoreticalKwh += theoreticalKwh;
+  }
+
+  if (dailyEfficiency.length === 0) return null;
+
+  const performanceRatioPercent = totalTheoreticalKwh > 0
+    ? (totalActualKwh / totalTheoreticalKwh) * 100
+    : 0;
+
+  const averagePeakSunHours = dailyEfficiency.reduce((sum, d) => sum + d.peakSunHours, 0) / dailyEfficiency.length;
+  const specificYieldKwhPerKwp = totalActualKwh / installedKwp;
+
+  let healthStatus: SystemEfficiency["healthStatus"];
+  if (performanceRatioPercent >= 85) healthStatus = "excellent";
+  else if (performanceRatioPercent >= 75) healthStatus = "good";
+  else if (performanceRatioPercent >= 60) healthStatus = "fair";
+  else healthStatus = "poor";
+
+  return {
+    performanceRatioPercent,
+    actualProductionKwh: totalActualKwh,
+    theoreticalProductionKwh: totalTheoreticalKwh,
+    dailyEfficiency,
+    averagePeakSunHours,
+    specificYieldKwhPerKwp,
+    healthStatus,
   };
 }
 

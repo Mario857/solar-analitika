@@ -21,6 +21,7 @@ import {
   formatMonthForApi,
   analyzeLoadShifting,
   compareTariffModels,
+  calculateSystemEfficiency,
   calculateRoi,
   calculateForecast,
   aggregateHourlyRadiationToDaily,
@@ -48,6 +49,7 @@ import Donate from "@/components/Donate";
 import ShareButton from "@/components/ShareButton";
 import BatterySimulator from "@/components/BatterySimulator";
 import TariffComparisonPanel from "@/components/TariffComparison";
+import SystemEfficiencyPanel from "@/components/SystemEfficiencyPanel";
 
 type TabId = "dash" | "yearly" | "energy" | "hourly" | "optimize" | "battery" | "roi" | "bill" | "table" | "settings";
 
@@ -105,6 +107,8 @@ export default function Home() {
 
   /* Weather-based GHI scale factors for production forecast */
   const [weatherScaleFactors, setWeatherScaleFactors] = useState<Record<string, number>>({});
+  /* Raw daily radiation data for system efficiency calculation */
+  const [weatherRadiation, setWeatherRadiation] = useState<import("@/lib/types").WeatherDayRadiation[]>([]);
 
   useEffect(() => {
     setConfig(loadConfig());
@@ -176,7 +180,10 @@ export default function Home() {
         const forecastDays = dailyRadiation.filter((d) => d.date >= todayStr);
 
         const scaleFactors = calculateGhiScaleFactors(historicalDays, forecastDays);
-        if (!cancelled) setWeatherScaleFactors(scaleFactors);
+        if (!cancelled) {
+          setWeatherScaleFactors(scaleFactors);
+          setWeatherRadiation(dailyRadiation);
+        }
       } catch {
         /* Weather fetch failed — forecast will use flat averages */
       }
@@ -453,6 +460,10 @@ export default function Home() {
     ? compareTariffModels(sortedDays, dailyDataRef.current, activeTariff)
     : null;
 
+  const systemEfficiency = hasData && derived && hasFusionSolar
+    ? calculateSystemEfficiency(derived, weatherRadiation, config.installedKwp)
+    : null;
+
   const forecast = hasData && derived
     ? calculateForecast(selectedMonth, derived, bill, billWithoutSolar, hasFusionSolar, weatherScaleFactors)
     : null;
@@ -499,6 +510,7 @@ export default function Home() {
     <>
       <EnergyFlow derived={derived} hasFusionSolar={hasFusionSolar} />
       <EnergyCharts sortedDays={sortedDays} derived={derived} hasFusionSolar={hasFusionSolar} hasConsumption={hasConsumption} />
+      {systemEfficiency && <SystemEfficiencyPanel efficiency={systemEfficiency} installedKwp={config.installedKwp} />}
     </>
   ) : (
     <div className={sectionBox}>

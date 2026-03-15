@@ -22,6 +22,7 @@ export const DEFAULTS: Config = {
   solidarityDiscount: true,
   renewableEnergyRate: 0.013239,
   vatRate: 0.13,
+  installedKwp: 10.8,
   systemCostEur: 0,
   installationDate: "",
   latitude: 45.815,

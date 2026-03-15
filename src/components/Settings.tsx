@@ -240,6 +240,19 @@ export default function Settings({ config, credentials, onSave, onReset, onCrede
         <h3 className={sectionHeading}>Solarni sustav</h3>
         <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
           <div className={fieldGroup}>
+            <label className={labelClasses}>Instalirana snaga</label>
+            <input
+              className={inputClasses}
+              type="number"
+              step="0.1"
+              min="0"
+              value={localConfig.installedKwp || ""}
+              onChange={(e) => updateField("installedKwp", parseFloat(e.target.value) || 0)}
+              placeholder="npr. 10.8"
+            />
+            <span className={unitClasses}>kWp — ukupna vršna snaga panela</span>
+          </div>
+          <div className={fieldGroup}>
             <label className={labelClasses}>Cijena sustava (s instalacijom)</label>
             <input
               className={inputClasses}
