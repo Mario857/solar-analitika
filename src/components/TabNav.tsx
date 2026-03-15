@@ -1,11 +1,12 @@
 "use client";
 
-type TabId = "dash" | "energy" | "hourly" | "bill" | "table" | "settings";
+type TabId = "dash" | "energy" | "hourly" | "optimize" | "bill" | "table" | "settings";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "dash", label: "Dashboard" },
   { id: "energy", label: "Energetski tok" },
   { id: "hourly", label: "Satni profil" },
+  { id: "optimize", label: "Optimizacija" },
   { id: "bill", label: "Račun" },
   { id: "table", label: "Tablica" },
   { id: "settings", label: "Postavke" },

@@ -18,6 +18,7 @@ import {
   calculateBill,
   calculateBillWithoutSolar,
   formatMonthForApi,
+  analyzeLoadShifting,
 } from "@/lib/calculations";
 import Header from "@/components/Header";
 import TabNav from "@/components/TabNav";
@@ -30,9 +31,10 @@ import EnergyCharts from "@/components/EnergyCharts";
 import HourlyProfile from "@/components/HourlyProfile";
 import BillPanel from "@/components/BillPanel";
 import DataTable from "@/components/DataTable";
+import LoadShiftInsights from "@/components/LoadShiftInsights";
 import Settings from "@/components/Settings";
 
-type TabId = "dash" | "energy" | "hourly" | "bill" | "table" | "settings";
+type TabId = "dash" | "energy" | "hourly" | "optimize" | "bill" | "table" | "settings";
 
 const INITIAL_MONTH_COUNT = 6;
 
@@ -279,6 +281,9 @@ export default function Home() {
   const billWithoutSolar = hasData && hasConsumption
     ? calculateBillWithoutSolar(sortedDays, dailyDataRef.current, config)
     : null;
+  const loadShiftAnalysis = hasData && hasConsumption
+    ? analyzeLoadShifting(sortedDays, hourlyDataRef.current, config)
+    : null;
 
   const statusColorClass = STATUS_COLOR_MAP[status.cls] || "text-text-dim";
 
@@ -373,6 +378,16 @@ export default function Home() {
 
       <div className={activeTab === "energy" ? "block" : "hidden"}>{energyContent}</div>
       <div className={activeTab === "hourly" ? "block" : "hidden"}>{hourlyContent}</div>
+      <div className={activeTab === "optimize" ? "block" : "hidden"}>
+        {hasData && loadShiftAnalysis ? (
+          <LoadShiftInsights analysis={loadShiftAnalysis} hasFusionSolar={hasFusionSolar} />
+        ) : (
+          <div className={sectionBox}>
+            <h3 className={sectionHeading}>Optimizacija potrošnje</h3>
+            <p className={noteText}>{hasData ? "Potrebni podaci preuzete energije." : "Pokrenite analizu."}</p>
+          </div>
+        )}
+      </div>
       <div className={activeTab === "bill" ? "block" : "hidden"}>{billContent}</div>
       <div className={activeTab === "table" ? "block" : "hidden"}>{tableContent}</div>
     </div>

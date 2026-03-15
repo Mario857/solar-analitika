@@ -7,6 +7,8 @@ import {
   HEPMeterRecord,
   HourlySample,
   MonthSelection,
+  LoadShiftAnalysis,
+  HourlyLoadShiftProfile,
 } from "@/lib/types";
 
 const HOURS_IN_DAY = 24;
@@ -339,4 +341,122 @@ export function calculateBillWithoutSolar(
   const solidarityCost = config.solidarityDiscount ? 0 : totalKwh * config.solidarityRate;
   const subtotal = energyCost + networkCost + solidarityCost + totalKwh * config.renewableEnergyRate + config.supplyFee + config.meteringFee;
   return subtotal + subtotal * config.vatRate;
+}
+
+const SOLAR_PRODUCTION_THRESHOLD_KW = 0.1;
+const TOP_HOURS_COUNT = 3;
+const EVENING_HOURS_START = 17;
+const EVENING_HOURS_END = 23;
+/** Fraction of evening grid consumption assumed shiftable to solar hours */
+const SHIFTABLE_FRACTION = 0.4;
+
+/**
+ * Analyze hourly generation vs consumption patterns to identify
+ * load shifting opportunities — when grid consumption could be
+ * moved to solar production hours to increase self-consumption.
+ */
+export function analyzeLoadShifting(
+  sortedDays: string[],
+  hourlyData: Record<string, Record<number, HourlySample>>,
+  config: Config
+): LoadShiftAnalysis {
+  const dayCount = sortedDays.length || 1;
+
+  /* Build average hourly profiles across the month */
+  const hourlyProfiles: HourlyLoadShiftProfile[] = [];
+  for (let hour = 0; hour < HOURS_IN_DAY; hour++) {
+    let totalGeneration = 0;
+    let totalConsumption = 0;
+
+    for (const dateKey of sortedDays) {
+      const sample = hourlyData[dateKey]?.[hour];
+      if (sample && sample.sampleCount > 0) {
+        totalGeneration += sample.generation / sample.sampleCount;
+        totalConsumption += sample.consumption / sample.sampleCount;
+      }
+    }
+
+    const averageGenerationKw = totalGeneration / dayCount;
+    const averageConsumptionKw = totalConsumption / dayCount;
+
+    /* During solar hours: grid consumption that could have been covered by solar */
+    const isSolarHour = averageGenerationKw > SOLAR_PRODUCTION_THRESHOLD_KW;
+    const shiftableConsumptionKw = isSolarHour ? averageConsumptionKw : 0;
+    /* Excess generation = solar power going to grid instead of being used locally */
+    const excessGenerationKw = isSolarHour
+      ? Math.max(averageGenerationKw - averageConsumptionKw, 0)
+      : 0;
+
+    hourlyProfiles.push({
+      hour,
+      averageGenerationKw,
+      averageConsumptionKw,
+      shiftableConsumptionKw,
+      excessGenerationKw,
+    });
+  }
+
+  /* Grid consumption during solar production hours (kWh/day) */
+  const gridConsumptionDuringSolarKwh = hourlyProfiles.reduce(
+    (sum, profile) => sum + profile.shiftableConsumptionKw,
+    0
+  );
+
+  /* Excess solar exported during peak hours (kWh/day) */
+  const excessSolarExportKwh = hourlyProfiles.reduce(
+    (sum, profile) => sum + profile.excessGenerationKw,
+    0
+  );
+
+  /* Best hours for running heavy appliances (highest excess generation) */
+  const bestHoursForLoad = [...hourlyProfiles]
+    .filter((profile) => profile.excessGenerationKw > SOLAR_PRODUCTION_THRESHOLD_KW)
+    .sort((a, b) => b.excessGenerationKw - a.excessGenerationKw)
+    .slice(0, TOP_HOURS_COUNT)
+    .map((profile) => profile.hour);
+
+  /* Evening hours with highest grid consumption — prime candidates for shifting */
+  const peakGridConsumptionHours = [...hourlyProfiles]
+    .filter(
+      (profile) =>
+        profile.hour >= EVENING_HOURS_START &&
+        profile.hour <= EVENING_HOURS_END &&
+        profile.averageConsumptionKw > SOLAR_PRODUCTION_THRESHOLD_KW
+    )
+    .sort((a, b) => b.averageConsumptionKw - a.averageConsumptionKw)
+    .slice(0, TOP_HOURS_COUNT)
+    .map((profile) => profile.hour);
+
+  /* Estimate shiftable daily kWh: fraction of evening consumption that could move to solar hours */
+  let eveningGridConsumptionKwh = 0;
+  for (const profile of hourlyProfiles) {
+    if (profile.hour >= EVENING_HOURS_START && profile.hour <= EVENING_HOURS_END) {
+      eveningGridConsumptionKwh += profile.averageConsumptionKw;
+    }
+  }
+  /* Cap shiftable load by available excess solar */
+  const shiftableDailyKwh = Math.min(
+    eveningGridConsumptionKwh * SHIFTABLE_FRACTION,
+    excessSolarExportKwh
+  );
+
+  /* Monthly savings estimate: shifted kWh × effective energy rate × days */
+  const isSingleTariff = config.tariffModel === "single";
+  const effectiveRate = isSingleTariff
+    ? config.energyPriceSingleTariff + config.distributionSingleTariff + config.transmissionSingleTariff
+    : config.energyPriceHighTariff + config.distributionHighTariff + config.transmissionHighTariff;
+  const rateWithSurcharges = effectiveRate + config.renewableEnergyRate +
+    (config.solidarityDiscount ? 0 : config.solidarityRate);
+  const rateWithVat = rateWithSurcharges * (1 + config.vatRate);
+  const estimatedMonthlySavingsEur = shiftableDailyKwh * dayCount * rateWithVat;
+
+  return {
+    hourlyProfiles,
+    gridConsumptionDuringSolarKwh,
+    excessSolarExportKwh,
+    shiftableDailyKwh,
+    bestHoursForLoad,
+    peakGridConsumptionHours,
+    estimatedMonthlySavingsEur,
+  };
 }

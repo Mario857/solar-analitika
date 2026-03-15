@@ -125,6 +125,34 @@ export interface SessionCredentials {
   fusionSolarPassword: string;
 }
 
+/** Hourly load shift analysis for a single hour slot */
+export interface HourlyLoadShiftProfile {
+  hour: number;
+  averageGenerationKw: number;
+  averageConsumptionKw: number;
+  /** Grid consumption that overlaps with solar production hours — potential to self-consume */
+  shiftableConsumptionKw: number;
+  /** Excess solar going to grid instead of being used */
+  excessGenerationKw: number;
+}
+
+/** Monthly load shift analysis summary */
+export interface LoadShiftAnalysis {
+  hourlyProfiles: HourlyLoadShiftProfile[];
+  /** Total grid consumption during solar production hours (kWh/day average) */
+  gridConsumptionDuringSolarKwh: number;
+  /** Total excess generation exported during peak solar (kWh/day average) */
+  excessSolarExportKwh: number;
+  /** Estimated daily kWh that could be shifted from evening to solar hours */
+  shiftableDailyKwh: number;
+  /** Best hours to run heavy appliances (sorted by excess generation) */
+  bestHoursForLoad: number[];
+  /** Hours with highest grid consumption that could be shifted */
+  peakGridConsumptionHours: number[];
+  /** Estimated monthly savings if shiftable load is moved to solar hours (€) */
+  estimatedMonthlySavingsEur: number;
+}
+
 /** Raw HEP API meter reading record */
 export interface HEPMeterRecord {
   Datum: string;
