@@ -116,6 +116,48 @@ export function resolveTariff(config: Config, monthKey: string): TariffPrices {
   };
 }
 
+/** Cached API tokens with expiry timestamps */
+interface CachedTokens {
+  hepToken: string;
+  hepTokenExpiry: number;
+  fsCookie: string;
+  fsCookieExpiry: number;
+}
+
+const TOKENS_KEY = "solar4_tokens";
+/** HEP tokens typically last ~24h, cache for 20h to be safe */
+const HEP_TOKEN_TTL_MS = 20 * 60 * 60 * 1000;
+/** FusionSolar cookies typically last ~12h, cache for 10h */
+const FS_COOKIE_TTL_MS = 10 * 60 * 60 * 1000;
+
+export function loadCachedTokens(): CachedTokens {
+  if (typeof window === "undefined") return { hepToken: "", hepTokenExpiry: 0, fsCookie: "", fsCookieExpiry: 0 };
+  try {
+    const raw = localStorage.getItem(TOKENS_KEY);
+    return raw ? JSON.parse(raw) : { hepToken: "", hepTokenExpiry: 0, fsCookie: "", fsCookieExpiry: 0 };
+  } catch {
+    return { hepToken: "", hepTokenExpiry: 0, fsCookie: "", fsCookieExpiry: 0 };
+  }
+}
+
+export function saveCachedHepToken(token: string): void {
+  const existing = loadCachedTokens();
+  existing.hepToken = token;
+  existing.hepTokenExpiry = Date.now() + HEP_TOKEN_TTL_MS;
+  localStorage.setItem(TOKENS_KEY, JSON.stringify(existing));
+}
+
+export function saveCachedFsCookie(cookie: string): void {
+  const existing = loadCachedTokens();
+  existing.fsCookie = cookie;
+  existing.fsCookieExpiry = Date.now() + FS_COOKIE_TTL_MS;
+  localStorage.setItem(TOKENS_KEY, JSON.stringify(existing));
+}
+
+export function clearCachedTokens(): void {
+  localStorage.removeItem(TOKENS_KEY);
+}
+
 export const HEP_API_BASE = "https://mjerenje.hep.hr/mjerenja/v1/api/data/omm";
 export const FUSION_SOLAR_API =
   "https://uni004eu5.fusionsolar.huawei.com/rest/pvms/web/station/v3/overview/energy-balance";

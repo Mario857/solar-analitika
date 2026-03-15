@@ -11,7 +11,11 @@ import {
   HourlySample,
   HEPMeterRecord,
 } from "@/lib/types";
-import { loadConfig, saveConfig, resetConfig, resolveTariff, HEP_API_BASE, FUSION_SOLAR_API } from "@/lib/config";
+import {
+  loadConfig, saveConfig, resetConfig, resolveTariff,
+  loadCachedTokens, saveCachedHepToken, saveCachedFsCookie,
+  HEP_API_BASE, FUSION_SOLAR_API,
+} from "@/lib/config";
 import {
   processHEPRecords,
   parseFusionSolarResponse,
@@ -343,33 +347,97 @@ export default function Home() {
     return cached;
   }
 
-  /** Resolve active tokens: login if credentials set, otherwise use manual tokens */
-  async function resolveTokens(): Promise<{ hepToken: string; fsCookie: string } | null> {
-    let hepToken = config.token;
+  /** Login to HEP and return a fresh token, or null on failure */
+  async function loginHep(): Promise<string | null> {
     const hasHepCredentials = credentials.hepUsername && credentials.hepPassword;
+    if (!hasHepCredentials) return null;
 
-    if (hasHepCredentials) {
-      setStatus({ text: "HEP prijava...", cls: "" });
-      try {
-        const loginResponse = await fetch("/api/hep-login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            username: credentials.hepUsername,
-            password: credentials.hepPassword,
-          }),
-        });
-        const loginResult = await loginResponse.json();
-        if (loginResult.success && loginResult.token) {
-          hepToken = loginResult.token;
-        } else {
-          setStatus({ text: `HEP prijava: ${loginResult.error || "neuspjeh"}`, cls: "err" });
-          return null;
-        }
-      } catch (error) {
-        setStatus({ text: `HEP prijava: ${(error as Error).message}`, cls: "err" });
-        return null;
+    setStatus({ text: "HEP prijava...", cls: "" });
+    try {
+      const loginResponse = await fetch("/api/hep-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: credentials.hepUsername,
+          password: credentials.hepPassword,
+        }),
+      });
+      const loginResult = await loginResponse.json();
+      if (loginResult.success && loginResult.token) {
+        saveCachedHepToken(loginResult.token);
+        /* Persist token in config so it's visible in Settings */
+        const updatedConfig = { ...config, token: loginResult.token };
+        setConfig(updatedConfig);
+        saveConfig(updatedConfig);
+        return loginResult.token;
       }
+      setStatus({ text: `HEP prijava: ${loginResult.error || "neuspjeh"}`, cls: "err" });
+    } catch (error) {
+      setStatus({ text: `HEP prijava: ${(error as Error).message}`, cls: "err" });
+    }
+    return null;
+  }
+
+  /** Login to FusionSolar and return a fresh cookie, or null on failure */
+  async function loginFusionSolar(): Promise<string | null> {
+    const hasAutoLoginCredentials = credentials.fusionSolarUsername && credentials.fusionSolarPassword;
+    if (!hasAutoLoginCredentials || !config.fusionSolarStation) return null;
+
+    setStatus({ text: "FusionSolar prijava...", cls: "" });
+    try {
+      const loginResponse = await fetch("/api/fs-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: credentials.fusionSolarUsername,
+          password: credentials.fusionSolarPassword,
+          subdomain: config.fusionSolarSubdomain,
+        }),
+      });
+      const loginResult = await loginResponse.json();
+      if (loginResult.success && loginResult.cookie) {
+        saveCachedFsCookie(loginResult.cookie);
+        /* Persist cookie in config so it's visible in Settings */
+        const updatedConfig = { ...config, fusionSolarCookie: loginResult.cookie };
+        setConfig(updatedConfig);
+        saveConfig(updatedConfig);
+        return loginResult.cookie;
+      }
+    } catch {
+      /* FS login failed — continue without it */
+    }
+    return null;
+  }
+
+  /**
+   * Resolve active tokens using this priority:
+   * 1. Cached tokens from localStorage (if not expired)
+   * 2. Fresh login using session credentials
+   * 3. Manual tokens from config (fallback)
+   */
+  async function resolveTokens(): Promise<{ hepToken: string; fsCookie: string } | null> {
+    const cached = loadCachedTokens();
+    const now = Date.now();
+
+    /* --- HEP token --- */
+    let hepToken = "";
+
+    /* Try cached token first */
+    if (cached.hepToken && cached.hepTokenExpiry > now) {
+      hepToken = cached.hepToken;
+    }
+
+    /* No cached token — try login */
+    if (!hepToken) {
+      const freshToken = await loginHep();
+      if (freshToken) {
+        hepToken = freshToken;
+      }
+    }
+
+    /* Still no token — fall back to manual token from config */
+    if (!hepToken && config.token) {
+      hepToken = config.token;
     }
 
     if (!hepToken) {
@@ -377,28 +445,25 @@ export default function Home() {
       return null;
     }
 
-    let fsCookie = config.fusionSolarCookie;
-    const hasAutoLoginCredentials = credentials.fusionSolarUsername && credentials.fusionSolarPassword;
+    /* --- FusionSolar cookie --- */
+    let fsCookie = "";
 
-    if (hasAutoLoginCredentials && config.fusionSolarStation) {
-      setStatus({ text: "FusionSolar prijava...", cls: "" });
-      try {
-        const loginResponse = await fetch("/api/fs-login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            username: credentials.fusionSolarUsername,
-            password: credentials.fusionSolarPassword,
-            subdomain: config.fusionSolarSubdomain,
-          }),
-        });
-        const loginResult = await loginResponse.json();
-        if (loginResult.success && loginResult.cookie) {
-          fsCookie = loginResult.cookie;
-        }
-      } catch {
-        /* FS login failed — continue without it */
+    /* Try cached cookie first */
+    if (cached.fsCookie && cached.fsCookieExpiry > now) {
+      fsCookie = cached.fsCookie;
+    }
+
+    /* No cached cookie — try login */
+    if (!fsCookie) {
+      const freshCookie = await loginFusionSolar();
+      if (freshCookie) {
+        fsCookie = freshCookie;
       }
+    }
+
+    /* Still no cookie — fall back to manual cookie from config */
+    if (!fsCookie && config.fusionSolarCookie) {
+      fsCookie = config.fusionSolarCookie;
     }
 
     /* Store active tokens for reuse by yearly batch loading */
@@ -421,7 +486,20 @@ export default function Home() {
 
     setStatus({ text: "Dohvaćanje podataka...", cls: "" });
 
-    const cached = await fetchAndProcessMonth(selectedMonth, tokens.hepToken, tokens.fsCookie, config);
+    let cached = await fetchAndProcessMonth(selectedMonth, tokens.hepToken, tokens.fsCookie, config);
+
+    /* If fetch failed and we were using a cached token, it may be expired.
+       Try re-login with session credentials and retry once. */
+    if (!cached) {
+      const freshHepToken = await loginHep();
+      if (freshHepToken) {
+        tokens.hepToken = freshHepToken;
+        activeHepTokenRef.current = freshHepToken;
+        setStatus({ text: "Token obnovljen, ponovni pokušaj...", cls: "" });
+        cached = await fetchAndProcessMonth(selectedMonth, tokens.hepToken, tokens.fsCookie, config);
+      }
+    }
+
     if (!cached) {
       setStatus({ text: "Nema podataka", cls: "err" });
       setIsLoading(false);
