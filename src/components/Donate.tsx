@@ -1,7 +1,7 @@
 "use client";
 
-const KEKS_PAY_PHONE = "+385976383060";
-const IBAN = "HR1234567890123456789";
+const KEKS_PAY_PHONE = "+385911568525";
+const IBAN = "HR7124020063208975836";
 
 interface DonateProps {
   keksPayPhone?: string;
