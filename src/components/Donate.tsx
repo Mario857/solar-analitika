@@ -12,7 +12,9 @@ interface DonateProps {
 
 export default function Donate({ keksPayPhone = KEKS_PAY_PHONE, iban = IBAN }: DonateProps) {
   const [isCopied, setIsCopied] = useState(false);
-  const keksLink = `kekspay://pay?receiver=${encodeURIComponent(keksPayPhone)}&currency=EUR`;
+  /* KEKS Pay expects phone number without '+' prefix and without URL encoding */
+  const keksPhoneClean = keksPayPhone.replace(/^\+/, "");
+  const keksLink = `kekspay://pay?receiver=${keksPhoneClean}&currency=EUR`;
 
   const handleCopyIban = async () => {
     await navigator.clipboard.writeText(iban);
