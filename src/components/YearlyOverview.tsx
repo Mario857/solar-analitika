@@ -343,7 +343,7 @@ export default function YearlyOverview({ config, onLoadMonth, cacheRevision }: Y
         </div>
 
         {errorMessage && (
-          <div className="flex items-center justify-between gap-2 mt-3 px-3 py-2 bg-red/10 border border-red/30 rounded-sm">
+          <div className="flex items-center justify-between gap-2 mt-3 px-3 py-2 bg-red/10 rounded-sm">
             <span className="font-mono text-xs text-red">{errorMessage}</span>
             <button
               className="font-mono text-xs text-red/60 hover:text-red cursor-pointer bg-transparent border-none px-1"
