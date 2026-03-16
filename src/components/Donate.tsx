@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 const KEKS_PAY_PHONE = "+385911568525";
 const IBAN = "HR7124020063208975836";
 
@@ -9,7 +11,16 @@ interface DonateProps {
 }
 
 export default function Donate({ keksPayPhone = KEKS_PAY_PHONE, iban = IBAN }: DonateProps) {
+  const [isCopied, setIsCopied] = useState(false);
   const keksLink = `kekspay://pay?receiver=${encodeURIComponent(keksPayPhone)}&currency=EUR`;
+
+  const handleCopyIban = async () => {
+    await navigator.clipboard.writeText(iban);
+    setIsCopied(true);
+    setTimeout(() => setIsCopied(false), 2000);
+  };
+
+  const copyButtonLabel = isCopied ? "Kopirano!" : "Kopiraj";
 
   return (
     <div className="bg-surface-1 border border-border rounded-default p-4 sm:p-6 md:p-8">
@@ -29,6 +40,12 @@ export default function Donate({ keksPayPhone = KEKS_PAY_PHONE, iban = IBAN }: D
         <div className="flex items-center gap-2">
           <span className="font-mono text-[0.6rem] text-text-dim">IBAN:</span>
           <code className="font-mono text-[0.6rem] text-text bg-surface-2 px-2 py-1 rounded-sm select-all">{iban}</code>
+          <button
+            onClick={handleCopyIban}
+            className="font-mono text-[0.6rem] text-text-dim bg-surface-2 px-2 py-1 rounded-sm border border-border cursor-pointer transition-all duration-150 hover:text-text hover:border-text-dim active:translate-y-px"
+          >
+            {copyButtonLabel}
+          </button>
         </div>
       </div>
 
