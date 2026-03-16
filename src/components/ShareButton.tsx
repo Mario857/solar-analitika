@@ -9,7 +9,7 @@ interface ShareButtonProps {
 }
 
 export default function ShareButton({ targetId, fileName = "solar-analitika" }: ShareButtonProps) {
-  const [status, setStatus] = useState<"idle" | "capturing" | "done">("idle");
+  const [status, setStatus] = useState<"idle" | "capturing" | "done" | "error">("idle");
 
   const handleShare = useCallback(async () => {
     const element = document.getElementById(targetId);
@@ -18,47 +18,72 @@ export default function ShareButton({ targetId, fileName = "solar-analitika" }: 
     setStatus("capturing");
 
     try {
+      const isMobile = window.innerWidth < 768;
+
       const canvas = await html2canvas(element, {
         backgroundColor: "#060a0f",
-        scale: 2,
+        scale: isMobile ? 1.5 : 2,
         useCORS: true,
+        allowTaint: true,
         logging: false,
         ignoreElements: (el) => el.classList.contains("no-screenshot"),
+        ...(isMobile && {
+          windowWidth: element.scrollWidth,
+          windowHeight: element.scrollHeight,
+        }),
       });
 
       const blob = await new Promise<Blob | null>((resolve) =>
         canvas.toBlob(resolve, "image/png")
       );
-      if (!blob) return;
+      if (!blob) {
+        setStatus("error");
+        setTimeout(() => setStatus("idle"), 2000);
+        return;
+      }
 
       const file = new File([blob], `${fileName}.png`, { type: "image/png" });
 
-      /* Use native Web Share API if available (mobile) */
-      const canShare = typeof navigator.share === "function" && navigator.canShare?.({ files: [file] });
+      /* Use native Web Share API with file support (most mobile browsers) */
+      const hasFileShare =
+        typeof navigator.share === "function" &&
+        typeof navigator.canShare === "function" &&
+        navigator.canShare({ files: [file] });
 
-      if (canShare) {
+      if (hasFileShare) {
         await navigator.share({
           title: "Solar Analitika",
           files: [file],
         });
+      } else if (typeof navigator.share === "function") {
+        /* Share API exists but doesn't support files — save image and share URL */
+        downloadBlob(blob, fileName);
+        await navigator.share({
+          title: "Solar Analitika",
+          text: "Pogledaj moju solarnu analizu na Solar Analitika",
+          url: window.location.href,
+        });
       } else {
-        /* Fallback: download the image */
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = `${fileName}.png`;
-        link.click();
-        URL.revokeObjectURL(url);
+        /* Desktop fallback: download the image */
+        downloadBlob(blob, fileName);
       }
 
       setStatus("done");
       setTimeout(() => setStatus("idle"), 2000);
-    } catch {
-      setStatus("idle");
+    } catch (err) {
+      /* AbortError = user cancelled the share sheet, not a real error */
+      const isAbort = err instanceof DOMException && err.name === "AbortError";
+      setStatus(isAbort ? "idle" : "error");
+      if (!isAbort) setTimeout(() => setStatus("idle"), 2000);
     }
   }, [targetId, fileName]);
 
-  const label = status === "capturing" ? "..." : status === "done" ? "Spremljeno!" : "Podijeli";
+  const labelMap: Record<typeof status, string> = {
+    idle: "Podijeli",
+    capturing: "...",
+    done: "Spremljeno!",
+    error: "Greška",
+  };
 
   return (
     <button
@@ -71,7 +96,16 @@ export default function ShareButton({ targetId, fileName = "solar-analitika" }: 
         <polyline points="16 6 12 2 8 6" />
         <line x1="12" y1="2" x2="12" y2="15" />
       </svg>
-      {label}
+      {labelMap[status]}
     </button>
   );
+}
+
+function downloadBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${fileName}.png`;
+  link.click();
+  URL.revokeObjectURL(url);
 }
