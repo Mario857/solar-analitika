@@ -32,6 +32,7 @@ export default function YearlyOverview({ config, onLoadMonth, cacheRevision }: Y
   const [isLoadingAll, setIsLoadingAll] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState("");
   const [refreshingMonth, setRefreshingMonth] = useState<number | null>(null);
+  const [errorMessage, setErrorMessage] = useState("");
 
   const sectionBox = "bg-surface-1 border border-border rounded-default p-4 mb-4 sm:p-6 sm:mb-6 md:p-8 md:mb-8";
   const sectionHeading = "font-mono text-xs font-semibold uppercase tracking-widest text-text-dim mb-4";
@@ -73,8 +74,10 @@ export default function YearlyOverview({ config, onLoadMonth, cacheRevision }: Y
 
   const handleLoadAll = useCallback(async () => {
     setIsLoadingAll(true);
+    setErrorMessage("");
     let loadedCount = 0;
     const skippedMonths: string[] = [];
+    const failedMonths: string[] = [];
 
     for (let monthIndex = 0; monthIndex < MONTHS_IN_YEAR; monthIndex++) {
       const monthNumber = monthIndex + 1;
@@ -85,19 +88,24 @@ export default function YearlyOverview({ config, onLoadMonth, cacheRevision }: Y
 
       setLoadingProgress(`${MONTH_NAMES[monthNumber]} ${selectedYear}...`);
       const month: MonthSelection = { month: monthNumber, year: selectedYear };
-      const result = await onLoadMonth(month);
 
-      if (result === "auth-error") {
-        setLoadingProgress("Greška prijave — prijavite se prvo na Dashboard tabu");
-        setIsLoadingAll(false);
-        return;
-      }
+      try {
+        const result = await onLoadMonth(month);
 
-      if (result === "ok") {
-        loadedCount++;
-      } else {
-        /* "no-data": no records for this month (e.g. panels not installed yet) — skip and continue */
-        skippedMonths.push(MONTH_NAMES[monthNumber]);
+        if (result === "auth-error") {
+          setErrorMessage("Greška prijave — prijavite se prvo na Postavkama");
+          setLoadingProgress("");
+          setIsLoadingAll(false);
+          return;
+        }
+
+        if (result === "ok") {
+          loadedCount++;
+        } else {
+          skippedMonths.push(MONTH_NAMES[monthNumber]);
+        }
+      } catch {
+        failedMonths.push(MONTH_NAMES[monthNumber]);
       }
     }
 
@@ -106,16 +114,31 @@ export default function YearlyOverview({ config, onLoadMonth, cacheRevision }: Y
     if (skippedMonths.length > 0) summaryParts.push(`${skippedMonths.length} bez podataka`);
     const summaryText = summaryParts.length > 0 ? summaryParts.join(", ") : "Sve učitano";
 
+    if (failedMonths.length > 0) {
+      setErrorMessage(`Greška pri učitavanju: ${failedMonths.join(", ")}`);
+    }
+
     setLoadingProgress(summaryText);
     setIsLoadingAll(false);
-    /* Clear the summary after a few seconds */
     setTimeout(() => setLoadingProgress(""), 4000);
   }, [selectedYear, cachedKeys, onLoadMonth]);
 
   const handleRefreshMonth = useCallback(async (monthNumber: number) => {
     setRefreshingMonth(monthNumber);
+    setErrorMessage("");
     const month: MonthSelection = { month: monthNumber, year: selectedYear };
-    await onLoadMonth(month, true);
+
+    try {
+      const result = await onLoadMonth(month, true);
+      if (result === "auth-error") {
+        setErrorMessage("Greška prijave — prijavite se prvo na Postavkama");
+      } else if (result === "no-data") {
+        setErrorMessage(`Nema podataka za ${MONTH_NAMES[monthNumber]} ${selectedYear}`);
+      }
+    } catch {
+      setErrorMessage(`Greška pri osvježavanju ${MONTH_NAMES[monthNumber]} ${selectedYear}`);
+    }
+
     setRefreshingMonth(null);
   }, [selectedYear, onLoadMonth]);
 
@@ -318,6 +341,18 @@ export default function YearlyOverview({ config, onLoadMonth, cacheRevision }: Y
             </button>
           )}
         </div>
+
+        {errorMessage && (
+          <div className="flex items-center justify-between gap-2 mt-3 px-3 py-2 bg-red/10 border border-red/30 rounded-sm">
+            <span className="font-mono text-xs text-red">{errorMessage}</span>
+            <button
+              className="font-mono text-xs text-red/60 hover:text-red cursor-pointer bg-transparent border-none px-1"
+              onClick={() => setErrorMessage("")}
+            >
+              ✕
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Summary cards */}
@@ -396,7 +431,7 @@ export default function YearlyOverview({ config, onLoadMonth, cacheRevision }: Y
       {cachedCount === 0 && (
         <div className={sectionBox}>
           <p className={noteText}>
-            Nema podataka za {selectedYear}. Analizirajte mjesece na Dashboard tabu ili kliknite &quot;Učitaj sve&quot; iznad.
+            Nema podataka za {selectedYear}. Analizirajte mjesece na Postavkama ili kliknite &quot;Učitaj sve&quot; iznad.
           </p>
         </div>
       )}

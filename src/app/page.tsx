@@ -144,6 +144,17 @@ export default function Home() {
       if (cached) {
         applyCachedData(cached);
         setStatus({ text: `Predmemorija (${cached.cachedAt.slice(0, 10)})`, cls: "cached" });
+      } else {
+        /* No cache for this month — clear stale data from previous month */
+        dailyDataRef.current = {};
+        fusionSolarRef.current = {};
+        hourlyDataRef.current = {};
+        setSortedDays([]);
+        setHasData(false);
+        setHasConsumption(false);
+        setHasFusionSolar(false);
+        setIsCached(false);
+        setStatus({ text: "Nema podataka — kliknite Analiziraj", cls: "" });
       }
     }
     loadFromCache();
