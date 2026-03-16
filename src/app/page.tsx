@@ -548,12 +548,35 @@ export default function Home() {
       if (!tokens) return "auth-error";
     }
 
-    const cached = await fetchAndProcessMonth(
+    let cached = await fetchAndProcessMonth(
       month,
       activeHepTokenRef.current,
       activeFsCookieRef.current,
       config
     );
+
+    /* If fetch failed, token may be stale — try re-login once */
+    if (!cached) {
+      const freshHepToken = await loginHep();
+      const freshFsCookie = await loginFusionSolar();
+      if (freshHepToken) {
+        activeHepTokenRef.current = freshHepToken;
+      }
+      if (freshFsCookie) {
+        activeFsCookieRef.current = freshFsCookie;
+      }
+      if (freshHepToken) {
+        cached = await fetchAndProcessMonth(
+          month,
+          activeHepTokenRef.current,
+          activeFsCookieRef.current,
+          config
+        );
+      } else {
+        return "auth-error";
+      }
+    }
+
     if (cached) {
       setCacheRevision((prev) => prev + 1);
       return "ok";
