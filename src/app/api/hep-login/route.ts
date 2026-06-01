@@ -6,9 +6,10 @@ interface LoginRequest {
 }
 
 /**
- * Proxy login to HEP mjerenje portal.
- * HEP uses a simple POST with {Username, Password} and returns a user object
- * containing a Token field used as Bearer token for API requests.
+ * Proxy login to HEP mjerenje portal (v4.x).
+ * HEP no longer returns a Bearer token — auth is via Set-Cookie session cookies.
+ * We extract those cookies and return them as a single Cookie header string that
+ * the client passes back on subsequent /api/hep calls (treated as the "token").
  */
 export async function POST(request: NextRequest) {
   try {
@@ -25,7 +26,8 @@ export async function POST(request: NextRequest) {
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
       },
-      body: JSON.stringify({ Username: username, Password: password }),
+      /* v4 requires the empty Token field in the request payload */
+      body: JSON.stringify({ Username: username, Password: password, Token: "" }),
     });
 
     if (!response.ok) {
@@ -36,19 +38,25 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const userData = await response.json();
+    /* Strip attributes (Path, HttpOnly, Secure, ...) and keep only name=value
+       pairs, joined with "; " to form a Cookie request header. */
+    const cookieHeader = response.headers
+      .getSetCookie()
+      .map((c) => c.split(";")[0].trim())
+      .filter(Boolean)
+      .join("; ");
 
-    if (!userData.Token) {
+    if (!cookieHeader) {
       return NextResponse.json(
-        { error: "Login succeeded but no token returned" },
+        { error: "Login succeeded but no session cookie returned" },
         { status: 502 }
       );
     }
 
     return NextResponse.json({
       success: true,
-      token: userData.Token,
-      username: userData.Username,
+      token: cookieHeader,
+      username,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
