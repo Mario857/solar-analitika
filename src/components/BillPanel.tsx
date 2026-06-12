@@ -18,7 +18,8 @@ const billTotalRow = "flex justify-between py-1.5 font-mono text-xs sm:text-sm b
 
 export default function BillPanel({ sortedDays, dailyData, bill, billWithoutSolar, tariff }: BillPanelProps) {
   const isSingleTariff = tariff.tariffModel === "single";
-  const savings = billWithoutSolar - bill.total;
+  // Savings compare against effective cost (invoice minus otkup payout), not just the invoice
+  const savings = billWithoutSolar - bill.effectiveCostEur;
 
   let energyCostBreakdown: React.ReactNode;
   let networkCostBreakdown: React.ReactNode;
@@ -101,6 +102,22 @@ export default function BillPanel({ sortedDays, dailyData, bill, billWithoutSola
     </div>
   ) : null;
 
+  // Otkup = HEP purchases the monthly feed-in surplus at the energy tariff price (no VAT),
+  // paid as account credit — it never appears as an invoice line.
+  const effectiveCostValueClass = bill.effectiveCostEur <= 0 ? "text-green text-base" : "text-text-bright text-base";
+  const surplusCreditRows = bill.surplusCreditEur > 0 ? (
+    <>
+      <div className={billRow}>
+        <span className="text-text-dim">Otkup viška ({bill.surplusKwh.toFixed(0)} kWh)</span>
+        <span className="text-green font-medium">−{bill.surplusCreditEur.toFixed(2)} €</span>
+      </div>
+      <div className={billTotalRow}>
+        <span className="text-text-dim">STVARNI TROŠAK</span>
+        <span className={effectiveCostValueClass}>{bill.effectiveCostEur.toFixed(2)} €</span>
+      </div>
+    </>
+  ) : null;
+
   return (
     <div className="bg-surface-1 border border-border rounded-default p-4 mb-4 sm:p-6 sm:mb-6 md:p-8 md:mb-8">
       <div className="flex items-center justify-between mb-4">
@@ -167,8 +184,13 @@ export default function BillPanel({ sortedDays, dailyData, bill, billWithoutSola
           <span className="text-text-dim">UKUPNO</span>
           <span className="text-text-bright text-base">{bill.total.toFixed(2)} €</span>
         </div>
+        {surplusCreditRows}
         {savingsRow}
       </div>
+
+      <p className="font-mono text-xs text-text-dim mt-3">
+        Otkup viška HEP isplaćuje kao preplatu na računu (bez PDV-a), po cijeni tarife energije — ne pojavljuje se kao stavka računa.
+      </p>
     </div>
   );
 }

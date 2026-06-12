@@ -42,7 +42,8 @@ export default function Cards({
 }: CardsProps) {
   const [visibleCount, setVisibleCount] = useState(0);
 
-  const savings = bill && billWithoutSolar ? billWithoutSolar - bill.total : 0;
+  // Real savings compare against effective cost (invoice minus otkup payout); 0 € without solar is a valid value
+  const savings = bill && billWithoutSolar !== null ? billWithoutSolar - bill.effectiveCostEur : 0;
   const peakGenerationKw = Math.max(...sortedDays.map((day) => dailyData[day].peakGenerationKw));
   const peakGenerationDay = sortedDays.find((day) => dailyData[day].peakGenerationKw === peakGenerationKw);
 
@@ -69,6 +70,9 @@ export default function Cards({
     { label: "Vršna snaga", value: peakGenerationKw.toFixed(2), subtitle: `kW ${peakGenerationDay?.slice(5) || ""}`, colorClass: "" },
     ...(hasConsumption && bill
       ? [{ label: "Račun", value: bill.total.toFixed(2), subtitle: "€ s PDV", colorClass: "accent-purple" }]
+      : []),
+    ...(bill && bill.surplusCreditEur > 0
+      ? [{ label: "Otkup viška", value: bill.surplusCreditEur.toFixed(2), subtitle: `€ (${bill.surplusKwh.toFixed(0)} kWh)`, colorClass: "accent-green" }]
       : []),
     ...(savings > SAVINGS_DISPLAY_THRESHOLD
       ? [{ label: "Ušteda", value: savings.toFixed(0), subtitle: "€/mj", colorClass: "accent-green" }]

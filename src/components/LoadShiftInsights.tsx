@@ -129,6 +129,17 @@ export default function LoadShiftInsights({ analysis, hasFusionSolar }: LoadShif
     });
   }
 
+  /* Under "samoopskrba" net metering shifting consumption doesn't change the bill,
+     so the note explains why the analysis still matters instead of promising savings. */
+  const shiftingNote = hasShiftingPotential ? (
+    <p className={noteText}>
+      Prebacivanjem ~{analysis.shiftableDailyKwh.toFixed(1)} kWh/dan na solarne sate povećavate samopotrošnju.
+      Napomena: u modelu samoopskrbe (net metering) predana energija već umanjuje račun 1:1, a višak se
+      otkupljuje po cijeni energije — pomicanje potrošnje stoga ne mijenja račun. Analiza je korisna za
+      dimenzioniranje baterije i za buduće tarifne modele bez punog netiranja.
+    </p>
+  ) : null;
+
   const noDataContent = !hasFusionSolar ? (
     <div className={sectionBox}>
       <h3 className={sectionHeading}>Optimizacija potrošnje</h3>
@@ -141,7 +152,7 @@ export default function LoadShiftInsights({ analysis, hasFusionSolar }: LoadShif
   return (
     <>
       {/* Summary cards */}
-      <div className="grid grid-cols-2 gap-3 mb-4 sm:grid-cols-4 sm:gap-4 sm:mb-6">
+      <div className="grid grid-cols-2 gap-3 mb-4 sm:grid-cols-3 sm:gap-4 sm:mb-6">
         <div className="metric-card accent-green bg-surface-1 border border-border rounded-default p-3 sm:p-4">
           <div className="font-mono text-[0.6rem] uppercase tracking-wide text-text-dim mb-1">Višak solara/dan</div>
           <div className="font-mono text-lg font-bold text-green">{analysis.excessSolarExportKwh.toFixed(1)} <span className="text-xs font-normal text-text-dim">kWh</span></div>
@@ -153,10 +164,6 @@ export default function LoadShiftInsights({ analysis, hasFusionSolar }: LoadShif
         <div className="metric-card accent-cyan bg-surface-1 border border-border rounded-default p-3 sm:p-4">
           <div className="font-mono text-[0.6rem] uppercase tracking-wide text-text-dim mb-1">Pomakljivo/dan</div>
           <div className="font-mono text-lg font-bold text-cyan">{analysis.shiftableDailyKwh.toFixed(1)} <span className="text-xs font-normal text-text-dim">kWh</span></div>
-        </div>
-        <div className="metric-card accent-purple bg-surface-1 border border-border rounded-default p-3 sm:p-4">
-          <div className="font-mono text-[0.6rem] uppercase tracking-wide text-text-dim mb-1">Moguća ušteda/mj</div>
-          <div className="font-mono text-lg font-bold text-purple">{analysis.estimatedMonthlySavingsEur.toFixed(2)} <span className="text-xs font-normal text-text-dim">€</span></div>
         </div>
       </div>
 
@@ -213,12 +220,7 @@ export default function LoadShiftInsights({ analysis, hasFusionSolar }: LoadShif
               </div>
             </div>
           ))}
-          {hasShiftingPotential && (
-            <p className={noteText}>
-              Prebacivanjem ~{analysis.shiftableDailyKwh.toFixed(1)} kWh/dan na solarne sate mogli biste uštedjeti ~{analysis.estimatedMonthlySavingsEur.toFixed(2)} €/mj.
-              Procjena pretpostavlja 40% večernje potrošnje pomakljivo, ograničeno na dostupan višak solara.
-            </p>
-          )}
+          {shiftingNote}
         </div>
       )}
     </>

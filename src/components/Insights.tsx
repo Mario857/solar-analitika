@@ -78,11 +78,18 @@ export default function Insights({
   }
 
   if (hasConsumption && bill && billWithoutSolar) {
-    const savings = billWithoutSolar - bill.total;
+    // Effective cost = invoice minus otkup payout (HEP pays the monthly surplus as account credit)
+    const savings = billWithoutSolar - bill.effectiveCostEur;
+    const billingText = (() => {
+      if (bill.surplusCreditEur > 0) {
+        return `Račun: ${bill.total.toFixed(2)}€ + otkup viška ${bill.surplusCreditEur.toFixed(2)}€ (${bill.surplusKwh.toFixed(0)} kWh). Bez solara: ~${billWithoutSolar.toFixed(0)}€. Ušteda: ${savings.toFixed(0)}€`;
+      }
+      return `Račun: ${bill.total.toFixed(2)}€ (neto ${bill.netBilledKwh.toFixed(0)} kWh). Bez solara: ~${billWithoutSolar.toFixed(0)}€. Ušteda: ${savings.toFixed(0)}€`;
+    })();
     items.push({
       tag: "€",
       tagClass: "currency",
-      text: `Račun: ${bill.total.toFixed(2)}€ (neto ${bill.netBilledKwh.toFixed(0)} kWh). Bez solara: ~${billWithoutSolar.toFixed(0)}€. Ušteda: ${savings.toFixed(0)}€`,
+      text: billingText,
     });
   }
 

@@ -590,17 +590,19 @@ export default function Home() {
   /* Resolve tariff prices for the selected month */
   const monthKey = toMonthPrefix(selectedMonth);
   const activeTariff = resolveTariff(config, monthKey);
+  /* Without production data self-consumption is unknown — bill estimates fall back to feed-in */
+  const selfConsumedForBill = hasFusionSolar && derived ? derived.totalSelfConsumed : null;
   const bill = hasData && hasConsumption
     ? calculateBill(sortedDays, dailyDataRef.current, activeTariff)
     : null;
   const billWithoutSolar = hasData && hasConsumption
-    ? calculateBillWithoutSolar(sortedDays, dailyDataRef.current, activeTariff)
+    ? calculateBillWithoutSolar(sortedDays, dailyDataRef.current, activeTariff, selfConsumedForBill)
     : null;
   const loadShiftAnalysis = hasData && hasConsumption
-    ? analyzeLoadShifting(sortedDays, hourlyDataRef.current, activeTariff)
+    ? analyzeLoadShifting(sortedDays, hourlyDataRef.current)
     : null;
   const tariffComparison = hasData && hasConsumption
-    ? compareTariffModels(sortedDays, dailyDataRef.current, activeTariff)
+    ? compareTariffModels(sortedDays, dailyDataRef.current, activeTariff, selfConsumedForBill)
     : null;
 
   const systemEfficiency = hasData && derived && hasFusionSolar
@@ -611,7 +613,8 @@ export default function Home() {
     ? calculateForecast(selectedMonth, derived, bill, billWithoutSolar, hasFusionSolar, weatherScaleFactors)
     : null;
 
-  const measuredSavings = bill && billWithoutSolar ? billWithoutSolar - bill.total : 0;
+  /* Savings against the real monthly cost: invoice minus surplus payout (otkup) */
+  const measuredSavings = bill && billWithoutSolar !== null ? billWithoutSolar - bill.effectiveCostEur : 0;
   const roiAnalysis = hasData && hasConsumption && measuredSavings > 0 && config.systemCostEur > 0
     ? calculateRoi(measuredSavings, selectedMonth, config.systemCostEur, config.installationDate)
     : null;

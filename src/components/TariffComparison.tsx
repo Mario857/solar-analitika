@@ -93,18 +93,18 @@ export default function TariffComparison({ comparison, activeTariffModel }: Tari
       {/* Side-by-side bill totals */}
       <div className="grid grid-cols-2 gap-3 mb-5">
         <div className={`${cardBox} ${cheaperWithSolar === "single" ? "border-green!" : ""}`}>
-          <div className={cardLabel}>Plavi (JT) — sa solarom</div>
+          <div className={cardLabel}>Plavi (JT) — trošak sa solarom</div>
           <div className={`${cardValue} ${cheaperWithSolar === "single" ? "text-green" : "text-text"}`}>
-            {singleTariffBill.total.toFixed(2)} €
+            {singleTariffBill.effectiveCostEur.toFixed(2)} €
           </div>
           <div className="font-mono text-[0.55rem] text-text-dim mt-1">
             Neto: {singleTariffBill.netBilledKwh.toFixed(0)} kWh
           </div>
         </div>
         <div className={`${cardBox} ${cheaperWithSolar === "dual" ? "border-green!" : ""}`}>
-          <div className={cardLabel}>Bijeli (VT/NT) — sa solarom</div>
+          <div className={cardLabel}>Bijeli (VT/NT) — trošak sa solarom</div>
           <div className={`${cardValue} ${cheaperWithSolar === "dual" ? "text-green" : "text-text"}`}>
-            {dualTariffBill.total.toFixed(2)} €
+            {dualTariffBill.effectiveCostEur.toFixed(2)} €
           </div>
           <div className="font-mono text-[0.55rem] text-text-dim mt-1">
             Neto VT+NT: {dualTariffBill.netBilledKwh.toFixed(0)} kWh
@@ -154,6 +154,14 @@ export default function TariffComparison({ comparison, activeTariffModel }: Tari
             <span className="text-text-dim">Ukupno s PDV</span>
             <span className="text-amber">{singleTariffBill.total.toFixed(2)} €</span>
           </div>
+          <div className={rowClasses}>
+            <span className="text-text-dim">Otkup viška</span>
+            <span className="text-green font-medium">−{singleTariffBill.surplusCreditEur.toFixed(2)} €</span>
+          </div>
+          <div className={`${rowClasses} border-t border-border-accent mt-1 pt-2 font-bold`}>
+            <span className="text-text-dim">Stvarni trošak</span>
+            <span className="text-amber">{singleTariffBill.effectiveCostEur.toFixed(2)} €</span>
+          </div>
         </div>
         <div>
           <h4 className="font-mono text-[0.6rem] uppercase tracking-wider text-text-dim mb-2 pb-1.5 border-b border-border">Bijeli VT/NT — stavke</h4>
@@ -176,6 +184,14 @@ export default function TariffComparison({ comparison, activeTariffModel }: Tari
           <div className={`${rowClasses} border-t border-border-accent mt-1 pt-2 font-bold`}>
             <span className="text-text-dim">Ukupno s PDV</span>
             <span className="text-amber">{dualTariffBill.total.toFixed(2)} €</span>
+          </div>
+          <div className={rowClasses}>
+            <span className="text-text-dim">Otkup viška</span>
+            <span className="text-green font-medium">−{dualTariffBill.surplusCreditEur.toFixed(2)} €</span>
+          </div>
+          <div className={`${rowClasses} border-t border-border-accent mt-1 pt-2 font-bold`}>
+            <span className="text-text-dim">Stvarni trošak</span>
+            <span className="text-amber">{dualTariffBill.effectiveCostEur.toFixed(2)} €</span>
           </div>
         </div>
       </div>

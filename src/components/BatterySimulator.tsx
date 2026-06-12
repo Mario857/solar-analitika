@@ -103,6 +103,13 @@ export default function BatterySimulator({ sortedDays, hourlyData, derived, tari
 
   const selfConGain = simulation.selfConsumptionWithBatteryPercent - simulation.selfConsumptionWithoutBatteryPercent;
 
+  // Under net metering battery savings are typically near zero or negative — color must reflect the sign
+  const savingsValueColorClass = (() => {
+    if (simulation.monthlySavingsEur > 0.5) return "text-green";
+    if (simulation.monthlySavingsEur < -0.5) return "text-red";
+    return "text-text-dim";
+  })();
+
   const presetButtons = BATTERY_PRESETS.map((preset, index) => {
     const isActive = customCapacity === null && selectedPresetIndex === index;
     return (
@@ -152,11 +159,11 @@ export default function BatterySimulator({ sortedDays, hourlyData, derived, tari
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
         <div className={cardBox}>
           <div className={cardLabel}>Ušteda / mj.</div>
-          <div className={`${cardValue} text-green`}>{simulation.monthlySavingsEur.toFixed(2)} €</div>
+          <div className={`${cardValue} ${savingsValueColorClass}`}>{simulation.monthlySavingsEur.toFixed(2)} €</div>
         </div>
         <div className={cardBox}>
           <div className={cardLabel}>Ušteda / god.</div>
-          <div className={`${cardValue} text-green`}>{simulation.estimatedAnnualSavingsEur.toFixed(0)} €</div>
+          <div className={`${cardValue} ${savingsValueColorClass}`}>{simulation.estimatedAnnualSavingsEur.toFixed(0)} €</div>
         </div>
         <div className={cardBox}>
           <div className={cardLabel}>Povrat inv.</div>
@@ -176,11 +183,11 @@ export default function BatterySimulator({ sortedDays, hourlyData, derived, tari
       {/* Bill comparison */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
         <div className={cardBox}>
-          <div className={cardLabel}>Račun bez bat.</div>
+          <div className={cardLabel}>Trošak bez baterije</div>
           <div className={`${cardValue} text-text`}>{simulation.billWithoutBatteryEur.toFixed(2)} €</div>
         </div>
         <div className={cardBox}>
-          <div className={cardLabel}>Račun s bat.</div>
+          <div className={cardLabel}>Trošak s baterijom</div>
           <div className={`${cardValue} text-green`}>{simulation.billWithBatteryEur.toFixed(2)} €</div>
         </div>
         <div className={cardBox}>
@@ -229,6 +236,8 @@ export default function BatterySimulator({ sortedDays, hourlyData, derived, tari
         Simulacija koristi pohlepni algoritam: višak solarne energije puni bateriju, deficit prazni bateriju prije uvoza iz mreže.
         Procjena povrata investicije temelji se na ~{(batteryConfig.capacityKwh * 500).toFixed(0)} € za {batteryConfig.capacityKwh} kWh bateriju (500 €/kWh).
         Učinkovitost: {(batteryConfig.roundTripEfficiency * 100).toFixed(0)}% round-trip.
+        U modelu samoopskrbe (net metering) baterija u pravilu ne smanjuje račun: predana energija već umanjuje preuzetu 1:1,
+        a višak se otkupljuje po cijeni energije. Gubici punjenja/pražnjenja mogu uštedu učiniti i negativnom.
       </p>
     </div>
   );

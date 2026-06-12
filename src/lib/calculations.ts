@@ -31,13 +31,38 @@ import { resolveTariff } from "@/lib/config";
 const HOURS_IN_DAY = 24;
 const QUARTER_HOUR_FACTOR = 0.25;
 
+/**
+ * Format a Date as a local "YYYY-MM-DD" key. HEP timestamps are Croatian local
+ * time, so the date key must come from the same local clock as getHours() —
+ * toISOString() would shift readings before 01:00/02:00 onto the previous day.
+ */
+function formatLocalDateKey(timestamp: Date): string {
+  const year = timestamp.getFullYear();
+  const month = String(timestamp.getMonth() + 1).padStart(2, "0");
+  const day = String(timestamp.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+/** HEP switches the VT window together with daylight saving time, not by calendar month */
+function isDaylightSavingTime(timestamp: Date): boolean {
+  const januaryOffset = new Date(timestamp.getFullYear(), 0, 1).getTimezoneOffset();
+  const julyOffset = new Date(timestamp.getFullYear(), 6, 1).getTimezoneOffset();
+  const standardTimeOffset = Math.max(januaryOffset, julyOffset);
+  return timestamp.getTimezoneOffset() < standardTimeOffset;
+}
+
+/** High tariff (VT) window for a given day: summer time 08-22, standard time 07-21 */
+function getHighTariffWindow(day: Date): { startHour: number; endHour: number } {
+  return isDaylightSavingTime(day)
+    ? { startHour: 8, endHour: 22 }
+    : { startHour: 7, endHour: 21 };
+}
+
 /** Check if a timestamp falls within high tariff (VT) hours */
 export function isHighTariffHour(timestamp: Date): boolean {
-  const month = timestamp.getMonth();
   const hour = timestamp.getHours();
-  const isSummer = month >= 3 && month <= 9;
-  // Summer (Apr-Oct): VT 08-22, Winter (Nov-Mar): VT 07-21
-  return isSummer ? hour >= 8 && hour < 22 : hour >= 7 && hour < 21;
+  const window = getHighTariffWindow(timestamp);
+  return hour >= window.startHour && hour < window.endHour;
 }
 
 function parseDecimalValue(value: string): number {
@@ -86,14 +111,14 @@ export function processHEPRecords(
     if (!hourlyData[dateKey]) {
       hourlyData[dateKey] = {};
       for (let hour = 0; hour < HOURS_IN_DAY; hour++) {
-        hourlyData[dateKey][hour] = { generation: 0, consumption: 0, sampleCount: 0 };
+        hourlyData[dateKey][hour] = { generation: 0, consumption: 0, sampleCount: 0, consumptionSampleCount: 0 };
       }
     }
   }
 
   for (const record of generationRecords) {
     const timestamp = new Date(record.Datum);
-    const dateKey = timestamp.toISOString().slice(0, 10);
+    const dateKey = formatLocalDateKey(timestamp);
     if (!dateKey.startsWith(monthPrefix)) continue;
 
     ensureDayExists(dateKey);
@@ -121,7 +146,7 @@ export function processHEPRecords(
 
   for (const record of consumptionRecords) {
     const timestamp = new Date(record.Datum);
-    const dateKey = timestamp.toISOString().slice(0, 10);
+    const dateKey = formatLocalDateKey(timestamp);
     if (!dateKey.startsWith(monthPrefix)) continue;
 
     ensureDayExists(dateKey);
@@ -139,7 +164,9 @@ export function processHEPRecords(
       dailyData[dateKey].peakConsumptionTime = timestamp.toTimeString().slice(0, 5);
     }
 
-    hourlyData[dateKey][timestamp.getHours()].consumption += powerKw;
+    const hourSample = hourlyData[dateKey][timestamp.getHours()];
+    hourSample.consumption += powerKw;
+    hourSample.consumptionSampleCount = (hourSample.consumptionSampleCount ?? 0) + 1;
   }
 
   return { dailyData, hourlyData };
@@ -166,7 +193,8 @@ export function parseFusionSolarResponse(
   if (Array.isArray(data)) {
     for (const entry of data) {
       const record = entry as Record<string, unknown>;
-      const dateStr = (record.collectTime as string) || (record.date as string) || "";
+      /* collectTime may arrive as a number — coerce before slicing */
+      const dateStr = String(record.collectTime ?? record.date ?? "");
       if (dateStr) {
         fusionSolarDaily[dateStr.slice(0, 10)] = {
           production: parseFloat(String(record.productPower)) || 0,
@@ -262,7 +290,13 @@ export function calculateDerivedMetrics(
   };
 }
 
-/** Calculate monthly electricity bill with net billing (feed-in offsets consumption) */
+/**
+ * Calculate monthly electricity bill under HEP samoopskrba net metering.
+ * Validated against a real HEP Opskrba invoice (5/2026): feed-in offsets
+ * consumption 1:1 on every per-kWh item (energy AND network fees), and the
+ * monthly surplus is purchased (otkup) at the energy tariff without VAT —
+ * paid out as account credit, not as an invoice line.
+ */
 export function calculateBill(
   sortedDays: string[],
   dailyData: Record<string, DailyEnergyData>,
@@ -280,10 +314,14 @@ export function calculateBill(
 
   let energyCost = 0;
   let networkCost = 0;
+  let surplusKwh = 0;
+  let surplusCreditEur = 0;
 
   if (isSingleTariff) {
     energyCost = netBilledKwh * tariff.energyPriceSingleTariff;
     networkCost = netBilledKwh * (tariff.distributionSingleTariff + tariff.transmissionSingleTariff);
+    surplusKwh = Math.max(totalFeedInKwh - totalConsumedKwh, 0);
+    surplusCreditEur = surplusKwh * tariff.energyPriceSingleTariff;
   } else {
     let consumedHighTariff = 0;
     let consumedLowTariff = 0;
@@ -301,6 +339,11 @@ export function calculateBill(
     networkCost =
       netHighTariff * (tariff.distributionHighTariff + tariff.transmissionHighTariff) +
       netLowTariff * (tariff.distributionLowTariff + tariff.transmissionLowTariff);
+    const surplusHighTariff = Math.max(feedInHighTariff - consumedHighTariff, 0);
+    const surplusLowTariff = Math.max(feedInLowTariff - consumedLowTariff, 0);
+    surplusKwh = surplusHighTariff + surplusLowTariff;
+    surplusCreditEur =
+      surplusHighTariff * tariff.energyPriceHighTariff + surplusLowTariff * tariff.energyPriceLowTariff;
   }
 
   const solidarityCost = tariff.solidarityDiscount ? 0 : netBilledKwh * tariff.solidarityRate;
@@ -308,6 +351,7 @@ export function calculateBill(
   const fixedCosts = tariff.supplyFee + tariff.meteringFee;
   const subtotal = energyCost + networkCost + solidarityCost + renewableEnergyCost + fixedCosts;
   const vatAmount = subtotal * tariff.vatRate;
+  const total = subtotal + vatAmount;
 
   return {
     energyCost,
@@ -317,24 +361,39 @@ export function calculateBill(
     fixedCosts,
     subtotal,
     vatAmount,
-    total: subtotal + vatAmount,
+    total,
     netBilledKwh,
     totalConsumedKwh,
     totalFeedInKwh,
+    surplusKwh,
+    surplusCreditEur,
+    effectiveCostEur: total - surplusCreditEur,
   };
 }
 
-/** Calculate hypothetical bill without solar (all consumption from grid) */
+/**
+ * Calculate hypothetical bill without solar (all household consumption from grid).
+ * Without panels the household would draw grid consumption PLUS the energy the
+ * panels covered directly (self-consumed). Feed-in would simply not exist, so it
+ * must NOT be added — it is only used as a rough proxy when production data
+ * (and therefore selfConsumedKwh) is unavailable.
+ */
 export function calculateBillWithoutSolar(
   sortedDays: string[],
   dailyData: Record<string, DailyEnergyData>,
-  tariff: TariffPrices
+  tariff: TariffPrices,
+  selfConsumedKwh: number | null
 ): number {
   const isSingleTariff = tariff.tariffModel === "single";
-  let totalKwh = 0;
+
+  let consumedKwh = 0;
+  let feedInKwh = 0;
   for (const dateKey of sortedDays) {
-    totalKwh += dailyData[dateKey].consumedKwh + dailyData[dateKey].feedInKwh;
+    consumedKwh += dailyData[dateKey].consumedKwh;
+    feedInKwh += dailyData[dateKey].feedInKwh;
   }
+  const solarCoveredKwh = selfConsumedKwh ?? feedInKwh;
+  const totalKwh = consumedKwh + solarCoveredKwh;
 
   let energyCost: number;
   let networkCost: number;
@@ -343,12 +402,22 @@ export function calculateBillWithoutSolar(
     energyCost = totalKwh * tariff.energyPriceSingleTariff;
     networkCost = totalKwh * (tariff.distributionSingleTariff + tariff.transmissionSingleTariff);
   } else {
-    let highTariffKwh = 0;
-    let lowTariffKwh = 0;
+    let consumedHighTariff = 0;
+    let consumedLowTariff = 0;
+    let feedInHighTariff = 0;
+    let feedInLowTariff = 0;
     for (const dateKey of sortedDays) {
-      highTariffKwh += dailyData[dateKey].consumedHighTariffKwh + dailyData[dateKey].feedInHighTariffKwh;
-      lowTariffKwh += dailyData[dateKey].consumedLowTariffKwh + dailyData[dateKey].feedInLowTariffKwh;
+      consumedHighTariff += dailyData[dateKey].consumedHighTariffKwh;
+      consumedLowTariff += dailyData[dateKey].consumedLowTariffKwh;
+      feedInHighTariff += dailyData[dateKey].feedInHighTariffKwh;
+      feedInLowTariff += dailyData[dateKey].feedInLowTariffKwh;
     }
+    /* Self-consumption happens during solar hours, so split it across VT/NT
+       in the same proportion as feed-in; default to VT when there is no feed-in. */
+    const feedInTotal = feedInHighTariff + feedInLowTariff;
+    const highTariffShare = feedInTotal > 0 ? feedInHighTariff / feedInTotal : 1;
+    const highTariffKwh = consumedHighTariff + solarCoveredKwh * highTariffShare;
+    const lowTariffKwh = consumedLowTariff + solarCoveredKwh * (1 - highTariffShare);
     energyCost = highTariffKwh * tariff.energyPriceHighTariff + lowTariffKwh * tariff.energyPriceLowTariff;
     networkCost =
       highTariffKwh * (tariff.distributionHighTariff + tariff.transmissionHighTariff) +
@@ -367,21 +436,23 @@ export function calculateBillWithoutSolar(
 export function compareTariffModels(
   sortedDays: string[],
   dailyData: Record<string, DailyEnergyData>,
-  tariff: TariffPrices
+  tariff: TariffPrices,
+  selfConsumedKwh: number | null
 ): TariffComparison {
   const singleTariff: TariffPrices = { ...tariff, tariffModel: "single" };
   const dualTariff: TariffPrices = { ...tariff, tariffModel: "dual" };
 
   const singleTariffBill = calculateBill(sortedDays, dailyData, singleTariff);
   const dualTariffBill = calculateBill(sortedDays, dailyData, dualTariff);
-  const singleTariffBillWithoutSolar = calculateBillWithoutSolar(sortedDays, dailyData, singleTariff);
-  const dualTariffBillWithoutSolar = calculateBillWithoutSolar(sortedDays, dailyData, dualTariff);
+  const singleTariffBillWithoutSolar = calculateBillWithoutSolar(sortedDays, dailyData, singleTariff, selfConsumedKwh);
+  const dualTariffBillWithoutSolar = calculateBillWithoutSolar(sortedDays, dailyData, dualTariff, selfConsumedKwh);
 
-  const singleTariffSolarSavings = singleTariffBillWithoutSolar - singleTariffBill.total;
-  const dualTariffSolarSavings = dualTariffBillWithoutSolar - dualTariffBill.total;
+  /* Compare real monthly cost (invoice minus surplus payout), not just the invoice */
+  const singleTariffSolarSavings = singleTariffBillWithoutSolar - singleTariffBill.effectiveCostEur;
+  const dualTariffSolarSavings = dualTariffBillWithoutSolar - dualTariffBill.effectiveCostEur;
 
-  const cheaperWithSolar = singleTariffBill.total <= dualTariffBill.total ? "single" : "dual";
-  const savingsDifference = Math.abs(singleTariffBill.total - dualTariffBill.total);
+  const cheaperWithSolar = singleTariffBill.effectiveCostEur <= dualTariffBill.effectiveCostEur ? "single" : "dual";
+  const savingsDifference = Math.abs(singleTariffBill.effectiveCostEur - dualTariffBill.effectiveCostEur);
 
   return {
     singleTariffBill,
@@ -511,6 +582,13 @@ export function calculateDegradation(
   const monthlyPoints: DegradationMonthPoint[] = [];
 
   for (const cached of cachedMonths) {
+    /* Skip partial months (e.g. the in-progress current month) — a half-filled
+       month halves the specific yield and reads as fake steep degradation */
+    const cachedYear = parseInt(cached.monthKey.slice(0, 4));
+    const cachedMonthNum = parseInt(cached.monthKey.slice(5, 7));
+    const daysInCachedMonth = new Date(cachedYear, cachedMonthNum, 0).getDate();
+    if (cached.sortedDays.length < daysInCachedMonth - 2) continue;
+
     const fusionSolarDaily = cached.fusionSolarDaily || {};
     const derived = calculateDerivedMetrics(
       cached.sortedDays,
@@ -614,11 +692,17 @@ const SHIFTABLE_FRACTION = 0.4;
  * Analyze hourly generation vs consumption patterns to identify
  * load shifting opportunities — when grid consumption could be
  * moved to solar production hours to increase self-consumption.
+ *
+ * Note: no € savings are estimated. Under HEP samoopskrba net metering
+ * (feed-in nets every per-kWh item 1:1 and surplus is purchased at the
+ * energy tariff), shifting consumption into solar hours reduces grid
+ * import and feed-in equally, so the bill does not change. The kWh
+ * analysis remains useful for battery sizing and for tariff schemes
+ * without full netting.
  */
 export function analyzeLoadShifting(
   sortedDays: string[],
-  hourlyData: Record<string, Record<number, HourlySample>>,
-  tariff: TariffPrices
+  hourlyData: Record<string, Record<number, HourlySample>>
 ): LoadShiftAnalysis {
   const dayCount = sortedDays.length || 1;
 
@@ -630,9 +714,14 @@ export function analyzeLoadShifting(
 
     for (const dateKey of sortedDays) {
       const sample = hourlyData[dateKey]?.[hour];
-      if (sample && sample.sampleCount > 0) {
+      if (!sample) continue;
+      if (sample.sampleCount > 0) {
         totalGeneration += sample.generation / sample.sampleCount;
-        totalConsumption += sample.consumption / sample.sampleCount;
+      }
+      /* Older cached data has no separate consumption count — fall back to the generation count */
+      const consumptionCount = sample.consumptionSampleCount ?? sample.sampleCount;
+      if (consumptionCount > 0) {
+        totalConsumption += sample.consumption / consumptionCount;
       }
     }
 
@@ -700,16 +789,6 @@ export function analyzeLoadShifting(
     excessSolarExportKwh
   );
 
-  /* Monthly savings estimate: shifted kWh × effective energy rate × days */
-  const isSingleTariff = tariff.tariffModel === "single";
-  const effectiveRate = isSingleTariff
-    ? tariff.energyPriceSingleTariff + tariff.distributionSingleTariff + tariff.transmissionSingleTariff
-    : tariff.energyPriceHighTariff + tariff.distributionHighTariff + tariff.transmissionHighTariff;
-  const rateWithSurcharges = effectiveRate + tariff.renewableEnergyRate +
-    (tariff.solidarityDiscount ? 0 : tariff.solidarityRate);
-  const rateWithVat = rateWithSurcharges * (1 + tariff.vatRate);
-  const estimatedMonthlySavingsEur = shiftableDailyKwh * dayCount * rateWithVat;
-
   return {
     hourlyProfiles,
     gridConsumptionDuringSolarKwh,
@@ -717,7 +796,6 @@ export function analyzeLoadShifting(
     shiftableDailyKwh,
     bestHoursForLoad,
     peakGridConsumptionHours,
-    estimatedMonthlySavingsEur,
   };
 }
 
@@ -833,11 +911,12 @@ export function computeMonthSummary(
   );
   /* Resolve tariff prices for this specific month */
   const tariff = resolveTariff(config, cached.monthKey);
+  const selfConsumedForBill = cached.hasFusionSolar ? derived.totalSelfConsumed : null;
   const bill = cached.hasConsumption
     ? calculateBill(cached.sortedDays, cached.dailyData, tariff)
     : null;
   const billWithoutSolar = cached.hasConsumption
-    ? calculateBillWithoutSolar(cached.sortedDays, cached.dailyData, tariff)
+    ? calculateBillWithoutSolar(cached.sortedDays, cached.dailyData, tariff, selfConsumedForBill)
     : 0;
 
   return {
@@ -851,7 +930,8 @@ export function computeMonthSummary(
     selfSufficiencyPercent: derived.selfSufficiency,
     billTotalEur: bill?.total ?? 0,
     billWithoutSolarEur: billWithoutSolar,
-    savingsEur: bill ? billWithoutSolar - bill.total : 0,
+    /* Savings against the real monthly cost: invoice minus surplus payout */
+    savingsEur: bill ? billWithoutSolar - bill.effectiveCostEur : 0,
   };
 }
 
@@ -921,22 +1001,31 @@ export function calculateForecast(
 
   /* HEP data is delayed — today's readings are incomplete, so exclude today.
      Also filter out zero-value records for future days returned by the API. */
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = formatLocalDateKey(new Date());
   const activeDays = derived.days.filter(
     (day) => day.date !== todayStr && (day.feedIn > 0 || day.consumed > 0 || day.solarProduction > 0)
   );
   const analyzedDays = activeDays.length;
-  const remainingDays = totalDaysInMonth - analyzedDays;
+  /* Project real calendar days after the last day with data, not analyzedDays+1..,
+     which drifts when today or gap days are excluded */
+  const lastActiveDayOfMonth = analyzedDays > 0
+    ? parseInt(activeDays[analyzedDays - 1].date.slice(8, 10))
+    : 0;
+  const remainingDays = totalDaysInMonth - lastActiveDayOfMonth;
 
   /* Only forecast partial months with enough data */
   if (remainingDays <= 0 || analyzedDays < MIN_FORECAST_DAYS) return null;
 
-  /* Filter out near-zero production days (cloudy/rain) for a more realistic average */
+  const isWeatherAdjusted = !!weatherScaleFactors && Object.keys(weatherScaleFactors).length > 0;
+
+  /* Filter out near-zero production days (cloudy/rain) for a more realistic average.
+     With weather scaling, cloudy days are handled by the per-day scale factor, so the
+     baseline must include them — otherwise good weather gets double-counted. */
   const productiveDays = hasFusionSolar
     ? activeDays.filter((day) => day.solarProduction > FORECAST_LOW_PRODUCTION_THRESHOLD)
     : activeDays.filter((day) => day.feedIn > FORECAST_LOW_PRODUCTION_THRESHOLD);
-  /* Fall back to all active days if most are low-production */
-  const forecastBasis = productiveDays.length >= MIN_FORECAST_DAYS ? productiveDays : activeDays;
+  const sunnyDayBasis = productiveDays.length >= MIN_FORECAST_DAYS ? productiveDays : activeDays;
+  const forecastBasis = isWeatherAdjusted ? activeDays : sunnyDayBasis;
   const basisCount = forecastBasis.length;
 
   const averageDailyProductionKwh = hasFusionSolar
@@ -947,8 +1036,6 @@ export function calculateForecast(
   const averageDailySelfConsumedKwh = hasFusionSolar
     ? forecastBasis.reduce((sum, day) => sum + day.selfConsumed, 0) / basisCount
     : 0;
-
-  const isWeatherAdjusted = !!weatherScaleFactors && Object.keys(weatherScaleFactors).length > 0;
 
   /* Build daily chart series and accumulate projected totals */
   const dailySeries: ForecastDayEntry[] = [];
@@ -970,7 +1057,7 @@ export function calculateForecast(
   }
 
   for (let dayOffset = 1; dayOffset <= remainingDays; dayOffset++) {
-    const dayNumber = analyzedDays + dayOffset;
+    const dayNumber = lastActiveDayOfMonth + dayOffset;
     const dateStr = `${selectedMonth.year}-${String(selectedMonth.month).padStart(2, "0")}-${String(dayNumber).padStart(2, "0")}`;
 
     /* Weather scales solar-dependent values; consumption stays flat */
@@ -1004,13 +1091,18 @@ export function calculateForecast(
     ? (projectedSelfConsumedKwh / projectedHousehold) * 100
     : 0;
 
-  /* Project bill — scale from analyzed portion */
+  /* Project bill — scale only the consumption-driven part; fixed monthly fees
+     (supply + metering) don't grow with days */
   let projectedBillEur = 0;
   let projectedSavingsEur = 0;
   if (bill && billWithoutSolar !== null) {
     const scaleFactor = totalDaysInMonth / analyzedDays;
-    projectedBillEur = bill.total * scaleFactor;
-    projectedSavingsEur = (billWithoutSolar - bill.total) * scaleFactor;
+    const vatFactor = bill.subtotal > 0 ? 1 + bill.vatAmount / bill.subtotal : 1;
+    const fixedCostsWithVat = bill.fixedCosts * vatFactor;
+    const variableCostWithVat = bill.total - fixedCostsWithVat;
+    projectedBillEur = fixedCostsWithVat + variableCostWithVat * scaleFactor;
+    /* Fixed fees cancel in the savings difference; use real cost incl. surplus payout */
+    projectedSavingsEur = (billWithoutSolar - bill.effectiveCostEur) * scaleFactor;
   }
 
   return {
@@ -1043,10 +1135,59 @@ export const BATTERY_PRESETS: { label: string; config: BatteryConfig }[] = [
 /** Approximate battery cost per kWh for ROI estimate (€) */
 const BATTERY_COST_PER_KWH_EUR = 500;
 
+/** Grid energy flows split by tariff band */
+interface GridFlows {
+  importHighTariffKwh: number;
+  importLowTariffKwh: number;
+  exportHighTariffKwh: number;
+  exportLowTariffKwh: number;
+}
+
+/**
+ * Real monthly cost for given grid flows under samoopskrba net metering:
+ * netted per-kWh items + fixed fees + VAT, minus the surplus payout (otkup)
+ * at the energy tariff. Mirrors calculateBill, but works on arbitrary flows
+ * so battery scenarios can be priced consistently.
+ */
+function computeNetBillingCost(flows: GridFlows, tariff: TariffPrices): number {
+  const importTotalKwh = flows.importHighTariffKwh + flows.importLowTariffKwh;
+  const exportTotalKwh = flows.exportHighTariffKwh + flows.exportLowTariffKwh;
+
+  let energyCost: number;
+  let networkCost: number;
+  let netTotalKwh: number;
+  let surplusCreditEur: number;
+
+  if (tariff.tariffModel === "single") {
+    netTotalKwh = Math.max(importTotalKwh - exportTotalKwh, 0);
+    energyCost = netTotalKwh * tariff.energyPriceSingleTariff;
+    networkCost = netTotalKwh * (tariff.distributionSingleTariff + tariff.transmissionSingleTariff);
+    surplusCreditEur = Math.max(exportTotalKwh - importTotalKwh, 0) * tariff.energyPriceSingleTariff;
+  } else {
+    const netHighKwh = Math.max(flows.importHighTariffKwh - flows.exportHighTariffKwh, 0);
+    const netLowKwh = Math.max(flows.importLowTariffKwh - flows.exportLowTariffKwh, 0);
+    netTotalKwh = netHighKwh + netLowKwh;
+    energyCost = netHighKwh * tariff.energyPriceHighTariff + netLowKwh * tariff.energyPriceLowTariff;
+    networkCost =
+      netHighKwh * (tariff.distributionHighTariff + tariff.transmissionHighTariff) +
+      netLowKwh * (tariff.distributionLowTariff + tariff.transmissionLowTariff);
+    const surplusHighKwh = Math.max(flows.exportHighTariffKwh - flows.importHighTariffKwh, 0);
+    const surplusLowKwh = Math.max(flows.exportLowTariffKwh - flows.importLowTariffKwh, 0);
+    surplusCreditEur =
+      surplusHighKwh * tariff.energyPriceHighTariff + surplusLowKwh * tariff.energyPriceLowTariff;
+  }
+
+  const solidarityCost = tariff.solidarityDiscount ? 0 : netTotalKwh * tariff.solidarityRate;
+  const renewableCost = netTotalKwh * tariff.renewableEnergyRate;
+  const subtotal = energyCost + networkCost + solidarityCost + renewableCost + tariff.supplyFee + tariff.meteringFee;
+  return subtotal * (1 + tariff.vatRate) - surplusCreditEur;
+}
+
 /**
  * Simulate hour-by-hour battery charge/discharge for the month.
  * Uses greedy strategy: charge from excess solar, discharge when consuming from grid.
- * Prefers discharging during high tariff hours for maximum savings.
+ * Both scenarios are priced with the same net-metering cost model (incl. surplus
+ * payout), so the savings reflect what a battery would actually change on the bill.
  */
 export function simulateBattery(
   sortedDays: string[],
@@ -1068,11 +1209,19 @@ export function simulateBattery(
   let totalGenerationKwh = 0;
   let totalConsumptionKwh = 0;
 
-  /* For bill recalculation with battery */
-  let gridImportHighTariffKwh = 0;
-  let gridImportLowTariffKwh = 0;
-  let gridExportHighTariffKwh = 0;
-  let gridExportLowTariffKwh = 0;
+  /* Tariff-band grid flows for cost comparison: with battery vs actual (without) */
+  const flowsWithBattery: GridFlows = {
+    importHighTariffKwh: 0,
+    importLowTariffKwh: 0,
+    exportHighTariffKwh: 0,
+    exportLowTariffKwh: 0,
+  };
+  const flowsWithoutBattery: GridFlows = {
+    importHighTariffKwh: 0,
+    importLowTariffKwh: 0,
+    exportHighTariffKwh: 0,
+    exportLowTariffKwh: 0,
+  };
 
   /* Average hourly profile accumulators (24 slots) */
   const hourlyTotals: { gen: number; con: number; charged: number; discharged: number; gridIn: number; gridOut: number; soc: number; count: number }[] = [];
@@ -1088,17 +1237,15 @@ export function simulateBattery(
     const dayHourly = hourlyData[dateKey];
     if (!dayHourly) continue;
 
-    const timestamp = new Date(dateKey + "T00:00:00");
-    const month = timestamp.getMonth();
-    const isSummer = month >= 3 && month <= 9;
+    const dayTariffWindow = getHighTariffWindow(new Date(dateKey + "T12:00:00"));
 
     for (let hour = 0; hour < HOURS_IN_DAY; hour++) {
       const sample = dayHourly[hour];
-      /* HourlySample stores total kWh across all samples in that hour.
-         generation/consumption are already in kWh for the full hour. */
-      const genKwh = sample ? sample.generation : 0;
-      const conKwh = sample ? sample.consumption : 0;
-      const isHighTariff = isSummer ? hour >= 8 && hour < 22 : hour >= 7 && hour < 21;
+      /* HourlySample stores the sum of 15-min kW readings — energy for the
+         hour is that sum × 0.25, same conversion as the daily aggregates */
+      const genKwh = (sample ? sample.generation : 0) * QUARTER_HOUR_FACTOR;
+      const conKwh = (sample ? sample.consumption : 0) * QUARTER_HOUR_FACTOR;
+      const isHighTariff = hour >= dayTariffWindow.startHour && hour < dayTariffWindow.endHour;
 
       totalGenerationKwh += genKwh;
       totalConsumptionKwh += conKwh;
@@ -1141,13 +1288,18 @@ export function simulateBattery(
       const batteryContribution = dischargedKwh * dischargeEfficiency;
       totalSelfConsumedWithBatteryKwh += directSelfConsumed + batteryContribution;
 
-      /* Tariff-split grid flows for bill calculation */
+      /* Tariff-split grid flows for cost comparison; without battery the meter
+         flows are simply consumption (import) and generation (export) */
       if (isHighTariff) {
-        gridImportHighTariffKwh += gridImportKwh;
-        gridExportHighTariffKwh += gridExportKwh;
+        flowsWithBattery.importHighTariffKwh += gridImportKwh;
+        flowsWithBattery.exportHighTariffKwh += gridExportKwh;
+        flowsWithoutBattery.importHighTariffKwh += conKwh;
+        flowsWithoutBattery.exportHighTariffKwh += genKwh;
       } else {
-        gridImportLowTariffKwh += gridImportKwh;
-        gridExportLowTariffKwh += gridExportKwh;
+        flowsWithBattery.importLowTariffKwh += gridImportKwh;
+        flowsWithBattery.exportLowTariffKwh += gridExportKwh;
+        flowsWithoutBattery.importLowTariffKwh += conKwh;
+        flowsWithoutBattery.exportLowTariffKwh += genKwh;
       }
 
       /* Accumulate for average hourly profile */
@@ -1162,9 +1314,9 @@ export function simulateBattery(
     }
   }
 
-  const sampleMonth = sortedDays[0] ? new Date(sortedDays[0] + "T00:00:00") : new Date(selectedMonth.year, selectedMonth.month - 1, 1);
+  const sampleMonth = sortedDays[0] ? new Date(sortedDays[0] + "T12:00:00") : new Date(selectedMonth.year, selectedMonth.month - 1, 1);
   const monthIdx = sampleMonth.getMonth();
-  const isSummerSample = monthIdx >= 3 && monthIdx <= 9;
+  const sampleTariffWindow = getHighTariffWindow(sampleMonth);
 
   /* Build average hourly profile */
   const averageHourlyProfile: BatteryHourState[] = hourlyTotals.map((t, hour) => {
@@ -1178,82 +1330,20 @@ export function simulateBattery(
       gridImportKwh: t.gridIn / count,
       gridExportKwh: t.gridOut / count,
       stateOfChargeKwh: t.soc / count,
-      isHighTariff: isSummerSample ? hour >= 8 && hour < 22 : hour >= 7 && hour < 21,
+      isHighTariff: hour >= sampleTariffWindow.startHour && hour < sampleTariffWindow.endHour,
     };
   });
 
-  /* Calculate bill with battery using net billing on the battery-adjusted grid flows */
-  const isSingleTariff = tariff.tariffModel === "single";
-  let billWithBatteryEur: number;
-
-  if (isSingleTariff) {
-    const netKwh = Math.max(totalGridImportWithBatteryKwh - totalGridExportWithBatteryKwh, 0);
-    const energyCost = netKwh * tariff.energyPriceSingleTariff;
-    const networkCost = netKwh * (tariff.distributionSingleTariff + tariff.transmissionSingleTariff);
-    const solidarityCost = tariff.solidarityDiscount ? 0 : netKwh * tariff.solidarityRate;
-    const renewableCost = netKwh * tariff.renewableEnergyRate;
-    const subtotal = energyCost + networkCost + solidarityCost + renewableCost + tariff.supplyFee + tariff.meteringFee;
-    billWithBatteryEur = subtotal + subtotal * tariff.vatRate;
-  } else {
-    const netHighKwh = Math.max(gridImportHighTariffKwh - gridExportHighTariffKwh, 0);
-    const netLowKwh = Math.max(gridImportLowTariffKwh - gridExportLowTariffKwh, 0);
-    const netTotalKwh = netHighKwh + netLowKwh;
-    const energyCost = netHighKwh * tariff.energyPriceHighTariff + netLowKwh * tariff.energyPriceLowTariff;
-    const networkCost =
-      netHighKwh * (tariff.distributionHighTariff + tariff.transmissionHighTariff) +
-      netLowKwh * (tariff.distributionLowTariff + tariff.transmissionLowTariff);
-    const solidarityCost = tariff.solidarityDiscount ? 0 : netTotalKwh * tariff.solidarityRate;
-    const renewableCost = netTotalKwh * tariff.renewableEnergyRate;
-    const subtotal = energyCost + networkCost + solidarityCost + renewableCost + tariff.supplyFee + tariff.meteringFee;
-    billWithBatteryEur = subtotal + subtotal * tariff.vatRate;
-  }
-
-  /* Current bill without battery (actual measured values) */
-  const totalGridImportWithoutBatteryKwh = derived.totalConsumed;
-  const billWithoutBatteryEur = derived.totalConsumed > 0
-    ? (() => {
-        /* Reuse existing bill logic via grid import/export totals */
-        if (isSingleTariff) {
-          const netKwh = Math.max(derived.totalConsumed - derived.totalFeedIn, 0);
-          const energyCost = netKwh * tariff.energyPriceSingleTariff;
-          const networkCost = netKwh * (tariff.distributionSingleTariff + tariff.transmissionSingleTariff);
-          const solidarityCost = tariff.solidarityDiscount ? 0 : netKwh * tariff.solidarityRate;
-          const renewableCost = netKwh * tariff.renewableEnergyRate;
-          const subtotal = energyCost + networkCost + solidarityCost + renewableCost + tariff.supplyFee + tariff.meteringFee;
-          return subtotal + subtotal * tariff.vatRate;
-        }
-        /* Dual tariff — sum from daily data */
-        let conHT = 0, conLT = 0, expHT = 0, expLT = 0;
-        for (const day of derived.days) {
-          const dateKey = day.date;
-          const hourly = hourlyData[dateKey];
-          if (!hourly) continue;
-          const ts = new Date(dateKey + "T00:00:00");
-          const m = ts.getMonth();
-          const isSumLocal = m >= 3 && m <= 9;
-          for (let h = 0; h < HOURS_IN_DAY; h++) {
-            const s = hourly[h];
-            if (!s) continue;
-            const isHT = isSumLocal ? h >= 8 && h < 22 : h >= 7 && h < 21;
-            if (isHT) { conHT += s.consumption; expHT += s.generation; }
-            else { conLT += s.consumption; expLT += s.generation; }
-          }
-        }
-        const netHT = Math.max(conHT - expHT, 0);
-        const netLT = Math.max(conLT - expLT, 0);
-        const netTotal = netHT + netLT;
-        const energyCost = netHT * tariff.energyPriceHighTariff + netLT * tariff.energyPriceLowTariff;
-        const networkCost =
-          netHT * (tariff.distributionHighTariff + tariff.transmissionHighTariff) +
-          netLT * (tariff.distributionLowTariff + tariff.transmissionLowTariff);
-        const solidarityCost = tariff.solidarityDiscount ? 0 : netTotal * tariff.solidarityRate;
-        const renewableCost = netTotal * tariff.renewableEnergyRate;
-        const subtotal = energyCost + networkCost + solidarityCost + renewableCost + tariff.supplyFee + tariff.meteringFee;
-        return subtotal + subtotal * tariff.vatRate;
-      })()
+  /* Price both scenarios with the same net-metering cost model (incl. surplus payout).
+     Under full netting a battery shrinks import and export together, so savings are
+     typically near zero or negative due to round-trip losses — that is the honest result. */
+  const billWithBatteryEur = computeNetBillingCost(flowsWithBattery, tariff);
+  const billWithoutBatteryEur = totalConsumptionKwh > 0 || totalGenerationKwh > 0
+    ? computeNetBillingCost(flowsWithoutBattery, tariff)
     : 0;
+  const totalGridImportWithoutBatteryKwh = derived.totalConsumed;
 
-  const monthlySavingsEur = Math.max(billWithoutBatteryEur - billWithBatteryEur, 0);
+  const monthlySavingsEur = billWithoutBatteryEur - billWithBatteryEur;
 
   /* Self-consumption and self-sufficiency rates */
   const selfConsumptionWithoutBatteryPercent = totalGenerationKwh > 0
@@ -1274,7 +1364,7 @@ export function simulateBattery(
     estimatedAnnualSavingsEur += normalizedMonthly * SEASONAL_WEIGHTS[i];
   }
 
-  /* Payback estimate */
+  /* Payback estimate — with zero or negative savings the battery never pays back */
   const batteryCostEur = battery.capacityKwh * BATTERY_COST_PER_KWH_EUR;
   const paybackYears = estimatedAnnualSavingsEur > 0 ? batteryCostEur / estimatedAnnualSavingsEur : 99;
 

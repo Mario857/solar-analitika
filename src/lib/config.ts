@@ -7,7 +7,8 @@ export const DEFAULTS: Config = {
   fusionSolarCookie: "",
   fusionSolarStation: "NE=193510122",
   fusionSolarSubdomain: "uni004eu5",
-  energyPriceSingleTariff: 0.123287,
+  /* Jedinstvena tarifa from HEP Opskrba invoice 5/2026 (HEPI plavi) */
+  energyPriceSingleTariff: 0.073059,
   energyPriceHighTariff: 0.097189,
   energyPriceLowTariff: 0.047688,
   supplyFee: 0.982,

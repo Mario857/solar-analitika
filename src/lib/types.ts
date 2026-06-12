@@ -22,11 +22,14 @@ export interface DailyEnergyData {
   statusIndicators: number[];
 }
 
-/** Hourly meter sample aggregation */
+/** Hourly meter sample aggregation — generation/consumption are sums of 15-min kW readings */
 export interface HourlySample {
   generation: number;
   consumption: number;
+  /** Number of generation readings in this hour */
   sampleCount: number;
+  /** Number of consumption readings in this hour — optional for cached data from older versions */
+  consumptionSampleCount?: number;
 }
 
 /** Per-day production data from FusionSolar */
@@ -74,6 +77,12 @@ export interface BillBreakdown {
   netBilledKwh: number;
   totalConsumedKwh: number;
   totalFeedInKwh: number;
+  /** Feed-in surplus beyond consumption (kWh) — purchased by HEP (otkup) */
+  surplusKwh: number;
+  /** Payout for surplus energy at the energy tariff, no VAT (€) */
+  surplusCreditEur: number;
+  /** Real monthly cost: invoice total minus surplus payout (€) — can be negative */
+  effectiveCostEur: number;
 }
 
 /** All tariff/price fields that can vary by date period */
@@ -173,8 +182,6 @@ export interface LoadShiftAnalysis {
   bestHoursForLoad: number[];
   /** Hours with highest grid consumption that could be shifted */
   peakGridConsumptionHours: number[];
-  /** Estimated monthly savings if shiftable load is moved to solar hours (€) */
-  estimatedMonthlySavingsEur: number;
 }
 
 /** ROI projection for a single month */
