@@ -1,6 +1,6 @@
 "use client";
 
-type TabId = "dash" | "yearly" | "energy" | "hourly" | "optimize" | "battery" | "compare" | "roi" | "bill" | "table" | "settings";
+type TabId = "dash" | "yearly" | "energy" | "hourly" | "optimize" | "battery" | "compare" | "roi" | "bill" | "table" | "ai" | "settings";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "dash", label: "Dashboard" },
@@ -13,6 +13,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "roi", label: "ROI" },
   { id: "bill", label: "Račun" },
   { id: "table", label: "Tablica" },
+  { id: "ai", label: "AI" },
   { id: "settings", label: "Postavke" },
 ];
 

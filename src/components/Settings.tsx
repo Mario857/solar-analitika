@@ -237,6 +237,43 @@ export default function Settings({ config, credentials, onSave, onReset, onCrede
       </div>
 
       <div className={sectionBox}>
+        <h3 className={sectionHeading}>AI Asistent (OpenRouter)</h3>
+        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
+          <div className={fieldGroup}>
+            <label className={labelClasses}>API ključ</label>
+            <input
+              className={inputClasses}
+              type="password"
+              value={localConfig.openRouterApiKey}
+              onChange={(e) => updateField("openRouterApiKey", e.target.value)}
+              placeholder="sk-or-v1-..."
+              autoComplete="off"
+            />
+            <span className={unitClasses}>Kreirajte ključ na openrouter.ai/keys</span>
+          </div>
+          <div className={fieldGroup}>
+            <label className={labelClasses}>Model</label>
+            <input
+              className={inputClasses}
+              type="text"
+              list="openrouter-model-suggestions"
+              value={localConfig.openRouterModel}
+              onChange={(e) => updateField("openRouterModel", e.target.value)}
+              placeholder="anthropic/claude-sonnet-4.5"
+            />
+            <datalist id="openrouter-model-suggestions">
+              <option value="anthropic/claude-sonnet-4.5" />
+              <option value="anthropic/claude-haiku-4.5" />
+              <option value="openai/gpt-4o-mini" />
+              <option value="google/gemini-2.5-flash" />
+              <option value="deepseek/deepseek-chat" />
+            </datalist>
+            <span className={unitClasses}>OpenRouter model ID — bilo koji model s openrouter.ai/models</span>
+          </div>
+        </div>
+      </div>
+
+      <div className={sectionBox}>
         <h3 className={sectionHeading}>Solarni sustav</h3>
         <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
           <div className={fieldGroup}>

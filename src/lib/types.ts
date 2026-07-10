@@ -148,6 +148,16 @@ export interface Config extends TariffPrices {
   longitude: number;
   /** Historical tariff periods — sorted by validFrom ascending */
   tariffHistory: TariffPeriod[];
+  /** OpenRouter API key for the AI assistant */
+  openRouterApiKey: string;
+  /** OpenRouter model id (e.g. "anthropic/claude-sonnet-4.5") */
+  openRouterModel: string;
+}
+
+/** Single message in the AI assistant conversation */
+export interface AiChatMessage {
+  role: "user" | "assistant";
+  content: string;
 }
 
 /** Session-only credentials — never persisted to localStorage */

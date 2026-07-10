@@ -57,8 +57,9 @@ import TariffComparisonPanel from "@/components/TariffComparison";
 import SystemEfficiencyPanel from "@/components/SystemEfficiencyPanel";
 import DegradationPanel from "@/components/DegradationPanel";
 import MonthComparison from "@/components/MonthComparison";
+import AiChat from "@/components/AiChat";
 
-type TabId = "dash" | "yearly" | "energy" | "hourly" | "optimize" | "battery" | "compare" | "roi" | "bill" | "table" | "settings";
+type TabId = "dash" | "yearly" | "energy" | "hourly" | "optimize" | "battery" | "compare" | "roi" | "bill" | "table" | "ai" | "settings";
 
 const INITIAL_MONTH_COUNT = 6;
 
@@ -786,6 +787,19 @@ export default function Home() {
       </div>
       <div className={activeTab === "bill" ? "block" : "hidden"}>{billContent}</div>
       <div className={activeTab === "table" ? "block" : "hidden"}>{tableContent}</div>
+      <div className={activeTab === "ai" ? "block" : "hidden"}>
+        <AiChat
+          config={config}
+          monthKey={monthKey}
+          derived={derived}
+          bill={bill}
+          billWithoutSolar={billWithoutSolar}
+          tariff={activeTariff}
+          loadShift={loadShiftAnalysis}
+          hasFusionSolar={hasFusionSolar}
+          hasConsumption={hasConsumption}
+        />
+      </div>
     </div>
   );
 }

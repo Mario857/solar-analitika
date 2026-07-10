@@ -29,6 +29,8 @@ export const DEFAULTS: Config = {
   latitude: 45.815,
   longitude: 15.982,
   tariffHistory: [],
+  openRouterApiKey: "",
+  openRouterModel: "anthropic/claude-sonnet-4.5",
 };
 
 const STORAGE_KEY = "solar4";
