@@ -73,8 +73,16 @@ export interface BillBreakdown {
   subtotal: number;
   vatAmount: number;
   total: number;
-  /** Net kWh billed after offsetting feed-in */
+  /**
+   * Net kWh that every per-kWh item is charged on under the active tariff model.
+   * Single tariff nets the whole month; dual tariff nets each band separately and
+   * sums them, so this is NOT simply `consumed - feedIn` in dual mode.
+   */
   netBilledKwh: number;
+  /** Net kWh in the high tariff (VT) band after offsetting VT feed-in */
+  netHighTariffKwh: number;
+  /** Net kWh in the low tariff (NT) band after offsetting NT feed-in */
+  netLowTariffKwh: number;
   totalConsumedKwh: number;
   totalFeedInKwh: number;
   /** Feed-in surplus beyond consumption (kWh) — purchased by HEP (otkup) */
@@ -202,22 +210,52 @@ export interface RoiMonthProjection {
   monthlySavingsEur: number;
   /** Cumulative savings up to and including this month (€) */
   cumulativeSavingsEur: number;
+  /** Cumulative savings discounted back to present value (€) */
+  discountedCumulativeSavingsEur: number;
+}
+
+/** Savings actually measured for one cached month */
+export interface MeasuredMonthSavings {
+  /** Month key "YYYY-MM" */
+  monthKey: string;
+  savingsEur: number;
+}
+
+/** Estimated savings for one calendar month, and where the number came from */
+export interface CalendarMonthSavings {
+  /** Calendar month number, 1–12 */
+  month: number;
+  savingsEur: number;
+  /** True when averaged from real cached months, false when seasonally extrapolated */
+  isMeasured: boolean;
 }
 
 /** Full ROI analysis result */
 export interface RoiAnalysis {
   /** Monthly savings from the analyzed month (€) */
   measuredMonthlySavingsEur: number;
-  /** Estimated annual savings based on seasonal weighting (€) */
+  /** Estimated annual savings — measured months plus seasonal fill for the rest (€) */
   estimatedAnnualSavingsEur: number;
-  /** Months until system cost is recovered */
+  /** Per-calendar-month savings used to build the projection */
+  calendarMonthSavings: CalendarMonthSavings[];
+  /** How many of the 12 calendar months are backed by real measurements */
+  measuredMonthCount: number;
+  /** Months until system cost is recovered in nominal terms */
   paybackMonths: number;
+  /** Months until system cost is recovered after discounting future savings */
+  discountedPaybackMonths: number;
   /** Annual return on investment (%) */
   annualRoiPercent: number;
   /** Months elapsed since installation */
   monthsElapsed: number;
   /** Estimated cumulative savings since installation (€) */
   estimatedCumulativeSavingsEur: number;
+  /** Assumed annual electricity price inflation (%) */
+  priceInflationPercent: number;
+  /** Assumed annual panel degradation (%) */
+  panelDegradationPercent: number;
+  /** Discount rate used for the discounted payback (%) */
+  discountRatePercent: number;
   /** Monthly projection series for chart (past + future until payback or 25 years) */
   projections: RoiMonthProjection[];
 }
@@ -293,6 +331,8 @@ export interface CachedMonthData {
 /** Summary for one month used in the yearly overview */
 export interface MonthSummary {
   monthKey: string;
+  /** Days of meter data behind these totals — needed to compare months fairly */
+  analyzedDays: number;
   totalFeedInKwh: number;
   totalConsumedKwh: number;
   totalSolarProductionKwh: number;
@@ -317,8 +357,16 @@ export interface SystemEfficiency {
   dailyEfficiency: DailyEfficiency[];
   /** Average daily peak sun hours for the month */
   averagePeakSunHours: number;
-  /** Specific yield: kWh produced per kWp installed */
+  /** Specific yield over the days that had irradiance data (kWh/kWp) */
   specificYieldKwhPerKwp: number;
+  /** Specific yield over the whole month, irrespective of irradiance coverage (kWh/kWp) */
+  monthlySpecificYieldKwhPerKwp: number;
+  /** Days matched with irradiance data — the basis for PR and specific yield */
+  coveredDays: number;
+  /** Days in the month that have production data */
+  productionDays: number;
+  /** True when irradiance data did not cover every production day */
+  isPartialCoverage: boolean;
   /** Health status based on PR: "excellent" | "good" | "fair" | "poor" */
   healthStatus: "excellent" | "good" | "fair" | "poor";
 }
@@ -395,12 +443,19 @@ export interface BatterySimulationResult {
   billWithoutBatteryEur: number;
   /** Monthly savings from battery (€) */
   monthlySavingsEur: number;
-  /** Self-consumption rate with battery (%) */
-  selfConsumptionWithBatteryPercent: number;
-  /** Self-consumption rate without battery (%) */
-  selfConsumptionWithoutBatteryPercent: number;
-  /** Self-sufficiency with battery (%) */
-  selfSufficiencyWithBatteryPercent: number;
+  /**
+   * Self-consumption and self-sufficiency are shares of gross panel production,
+   * which is only known when FusionSolar data is present. They are null otherwise —
+   * grid feed-in alone cannot tell us how much solar the house used directly.
+   */
+  selfConsumptionWithBatteryPercent: number | null;
+  selfConsumptionWithoutBatteryPercent: number | null;
+  selfSufficiencyWithBatteryPercent: number | null;
+  selfSufficiencyWithoutBatteryPercent: number | null;
+  /** Round-trip energy lost in the battery over the month (kWh) */
+  totalBatteryLossKwh: number;
+  /** Household load — identical with and without a battery (kWh) */
+  householdLoadKwh: number;
   /** Total energy stored over the month (kWh) */
   totalEnergyStoredKwh: number;
   /** Total energy discharged over the month (kWh) */
@@ -429,20 +484,37 @@ export interface DegradationMonthPoint {
   hasFusionSolar: boolean;
 }
 
+/**
+ * One same-calendar-month comparison across two years — the unit of the
+ * degradation estimate. Comparing like months needs no seasonal model at all.
+ */
+export interface YearOverYearComparison {
+  /** Calendar month number, 1–12 */
+  month: number;
+  earlierMonthKey: string;
+  laterMonthKey: string;
+  earlierYieldKwhPerKwp: number;
+  laterYieldKwhPerKwp: number;
+  /** Years between the two points (usually 1) */
+  yearsApart: number;
+  /** Annualized change (% per year, positive = loss) */
+  annualChangePercent: number;
+}
+
 /** Panel degradation analysis across all cached months */
 export interface DegradationAnalysis {
   /** Monthly data points sorted chronologically */
   monthlyPoints: DegradationMonthPoint[];
+  /** Same-month year-over-year comparisons backing the estimate */
+  comparisons: YearOverYearComparison[];
   /** Estimated annual degradation rate (% per year, positive = loss) */
   annualDegradationRatePercent: number;
-  /** Whether enough data exists for reliable trend (at least 6 months) */
+  /** Spread of the individual comparisons (± percentage points) */
+  uncertaintyPercent: number;
+  /** Whether enough same-month pairs exist for a trustworthy estimate */
   isReliable: boolean;
   /** Expected annual degradation for crystalline silicon (~0.5%) */
   expectedDegradationRatePercent: number;
-  /** Linear regression slope (kWh/kWp per month) */
-  trendSlopePerMonth: number;
-  /** Linear regression intercept */
-  trendIntercept: number;
   /** First month in dataset */
   firstMonth: string;
   /** Last month in dataset */

@@ -77,7 +77,8 @@ export default function Insights({
     items.push({ tag: "Gap", tagClass: "gap", text: `Nula od ${productionGapStart}` });
   }
 
-  if (hasConsumption && bill && billWithoutSolar) {
+  /* A 0 € counterfactual bill is a real value, so compare against null explicitly */
+  if (hasConsumption && bill && billWithoutSolar !== null) {
     // Effective cost = invoice minus otkup payout (HEP pays the monthly surplus as account credit)
     const savings = billWithoutSolar - bill.effectiveCostEur;
     const billingText = (() => {

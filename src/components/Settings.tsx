@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Config, SessionCredentials, TariffPeriod } from "@/lib/types";
 import { DEFAULTS } from "@/lib/config";
 
@@ -18,9 +18,14 @@ export default function Settings({ config, credentials, onSave, onReset, onCrede
   const [localConfig, setLocalConfig] = useState<Config>({ ...config });
   const [isSaved, setIsSaved] = useState(false);
 
-  useEffect(() => {
+  /* Re-seed the editable copy when the saved config changes (e.g. a fresh token
+     was stored during analysis). Adjusting state during render is React's
+     documented pattern for this — an effect would render once with stale fields. */
+  const [syncedConfig, setSyncedConfig] = useState<Config>(config);
+  if (syncedConfig !== config) {
+    setSyncedConfig(config);
     setLocalConfig({ ...config });
-  }, [config]);
+  }
 
   const updateField = <K extends keyof Config>(key: K, value: Config[K]) => {
     setLocalConfig((prev) => ({ ...prev, [key]: value }));

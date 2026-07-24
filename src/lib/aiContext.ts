@@ -77,6 +77,8 @@ function buildBillSection(bill: BillBreakdown, billWithoutSolar: number | null):
     `fixed costs (supply + metering): ${round(bill.fixedCosts)} EUR`,
     `subtotal: ${round(bill.subtotal)} EUR; VAT: ${round(bill.vatAmount)} EUR; invoice total: ${round(bill.total)} EUR`,
     `net billed energy after feed-in offset: ${round(bill.netBilledKwh)} kWh (consumed ${round(bill.totalConsumedKwh)} kWh, feed-in ${round(bill.totalFeedInKwh)} kWh)`,
+    /* Under dual tariff each band nets separately, so the net is not consumed - feed-in */
+    `net billed by tariff band: VT ${round(bill.netHighTariffKwh)} kWh, NT ${round(bill.netLowTariffKwh)} kWh`,
     `surplus sold to HEP (otkup): ${round(bill.surplusKwh)} kWh = ${round(bill.surplusCreditEur)} EUR credit`,
     `effective monthly cost (invoice minus surplus credit): ${round(bill.effectiveCostEur)} EUR`,
   ];

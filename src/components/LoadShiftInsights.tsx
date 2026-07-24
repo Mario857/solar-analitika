@@ -92,8 +92,10 @@ export default function LoadShiftInsights({ analysis, hasFusionSolar }: LoadShif
   const recommendations: Recommendation[] = [];
 
   if (analysis.bestHoursForLoad.length > 0) {
-    const startHour = formatHour(analysis.bestHoursForLoad[0]);
-    const endHour = formatHour(analysis.bestHoursForLoad[analysis.bestHoursForLoad.length - 1] + 1);
+    /* bestHoursForLoad is ranked by excess solar, not chronological — taking the
+       first and last entries as a range produced nonsense like "12:00–12:00". */
+    const startHour = formatHour(Math.min(...analysis.bestHoursForLoad));
+    const endHour = formatHour(Math.max(...analysis.bestHoursForLoad) + 1);
     recommendations.push({
       icon: "🔌",
       title: "Perilica, sušilica, perilica posuđa",

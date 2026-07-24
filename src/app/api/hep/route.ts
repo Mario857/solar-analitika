@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { validateProxyTarget } from "@/lib/proxyGuard";
 
 /**
  * Proxy HEP data requests. The `token` field is the Cookie header string
@@ -15,6 +16,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Missing 'url'" }, { status: 400 });
     }
 
+    const target = validateProxyTarget(url);
+    if (!target.url) {
+      return NextResponse.json({ error: target.error }, { status: 400 });
+    }
+
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       "User-Agent": "Mozilla/5.0",
@@ -28,10 +34,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const resp = await fetch(url, {
+    const resp = await fetch(target.url, {
       method: "POST",
       headers,
       body: "",
+      /* Never let a redirect carry the session cookie off the allowed host */
+      redirect: "manual",
     });
 
     const data = await resp.text();

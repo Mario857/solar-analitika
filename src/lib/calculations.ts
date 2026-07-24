@@ -25,11 +25,16 @@ import {
   RoiMonthProjection,
   DegradationAnalysis,
   DegradationMonthPoint,
+  YearOverYearComparison,
+  MeasuredMonthSavings,
+  CalendarMonthSavings,
 } from "@/lib/types";
 import { resolveTariff } from "@/lib/config";
 
 const HOURS_IN_DAY = 24;
 const QUARTER_HOUR_FACTOR = 0.25;
+/** The battery simulation steps one hour at a time, so kW × this = kWh per step */
+const HOURS_PER_STEP = 1;
 
 /**
  * Format a Date as a local "YYYY-MM-DD" key. HEP timestamps are Croatian local
@@ -290,57 +295,80 @@ export function calculateDerivedMetrics(
   };
 }
 
-/**
- * Calculate monthly electricity bill under HEP samoopskrba net metering.
- * Validated against a real HEP Opskrba invoice (5/2026): feed-in offsets
- * consumption 1:1 on every per-kWh item (energy AND network fees), and the
- * monthly surplus is purchased (otkup) at the energy tariff without VAT —
- * paid out as account credit, not as an invoice line.
- */
-export function calculateBill(
+/** Grid energy flows split by tariff band */
+export interface GridFlows {
+  importHighTariffKwh: number;
+  importLowTariffKwh: number;
+  exportHighTariffKwh: number;
+  exportLowTariffKwh: number;
+}
+
+/** Sum the per-band VT/NT flows of a set of days into a single GridFlows */
+export function sumGridFlows(
   sortedDays: string[],
-  dailyData: Record<string, DailyEnergyData>,
-  tariff: TariffPrices
-): BillBreakdown {
-  const isSingleTariff = tariff.tariffModel === "single";
-
-  let totalConsumedKwh = 0;
-  let totalFeedInKwh = 0;
+  dailyData: Record<string, DailyEnergyData>
+): GridFlows {
+  const flows: GridFlows = {
+    importHighTariffKwh: 0,
+    importLowTariffKwh: 0,
+    exportHighTariffKwh: 0,
+    exportLowTariffKwh: 0,
+  };
   for (const dateKey of sortedDays) {
-    totalConsumedKwh += dailyData[dateKey].consumedKwh;
-    totalFeedInKwh += dailyData[dateKey].feedInKwh;
+    const day = dailyData[dateKey];
+    flows.importHighTariffKwh += day.consumedHighTariffKwh;
+    flows.importLowTariffKwh += day.consumedLowTariffKwh;
+    flows.exportHighTariffKwh += day.feedInHighTariffKwh;
+    flows.exportLowTariffKwh += day.feedInLowTariffKwh;
   }
-  const netBilledKwh = Math.max(totalConsumedKwh - totalFeedInKwh, 0);
+  return flows;
+}
 
-  let energyCost = 0;
-  let networkCost = 0;
-  let surplusKwh = 0;
-  let surplusCreditEur = 0;
+/**
+ * Calculate a full monthly bill from arbitrary grid flows under HEP samoopskrba
+ * net metering. Validated against a real HEP Opskrba invoice (5/2026): feed-in
+ * offsets consumption 1:1 on every per-kWh item (energy AND network fees), and
+ * the monthly surplus is purchased (otkup) at the energy tariff without VAT —
+ * paid out as account credit, not as an invoice line.
+ *
+ * Netting depends on the tariff model: single tariff nets the month as one pool,
+ * dual tariff nets VT and NT separately. Every per-kWh item — energy, network,
+ * solidarity AND renewable (OIE) — must use the same netted base, otherwise the
+ * surcharges get billed on kWh the energy line never saw.
+ *
+ * This is the single source of truth for billing; every caller goes through it
+ * so the bill panel, tariff comparison and battery simulator cannot drift apart.
+ */
+export function calculateBillFromFlows(flows: GridFlows, tariff: TariffPrices): BillBreakdown {
+  const totalConsumedKwh = flows.importHighTariffKwh + flows.importLowTariffKwh;
+  const totalFeedInKwh = flows.exportHighTariffKwh + flows.exportLowTariffKwh;
 
-  if (isSingleTariff) {
+  /* Per-band nets are always well defined; which of them drives the bill
+     depends on the tariff model below. */
+  const netHighTariffKwh = Math.max(flows.importHighTariffKwh - flows.exportHighTariffKwh, 0);
+  const netLowTariffKwh = Math.max(flows.importLowTariffKwh - flows.exportLowTariffKwh, 0);
+
+  let netBilledKwh: number;
+  let energyCost: number;
+  let networkCost: number;
+  let surplusKwh: number;
+  let surplusCreditEur: number;
+
+  if (tariff.tariffModel === "single") {
+    netBilledKwh = Math.max(totalConsumedKwh - totalFeedInKwh, 0);
     energyCost = netBilledKwh * tariff.energyPriceSingleTariff;
     networkCost = netBilledKwh * (tariff.distributionSingleTariff + tariff.transmissionSingleTariff);
     surplusKwh = Math.max(totalFeedInKwh - totalConsumedKwh, 0);
     surplusCreditEur = surplusKwh * tariff.energyPriceSingleTariff;
   } else {
-    let consumedHighTariff = 0;
-    let consumedLowTariff = 0;
-    let feedInHighTariff = 0;
-    let feedInLowTariff = 0;
-    for (const dateKey of sortedDays) {
-      consumedHighTariff += dailyData[dateKey].consumedHighTariffKwh;
-      consumedLowTariff += dailyData[dateKey].consumedLowTariffKwh;
-      feedInHighTariff += dailyData[dateKey].feedInHighTariffKwh;
-      feedInLowTariff += dailyData[dateKey].feedInLowTariffKwh;
-    }
-    const netHighTariff = Math.max(consumedHighTariff - feedInHighTariff, 0);
-    const netLowTariff = Math.max(consumedLowTariff - feedInLowTariff, 0);
-    energyCost = netHighTariff * tariff.energyPriceHighTariff + netLowTariff * tariff.energyPriceLowTariff;
+    netBilledKwh = netHighTariffKwh + netLowTariffKwh;
+    energyCost =
+      netHighTariffKwh * tariff.energyPriceHighTariff + netLowTariffKwh * tariff.energyPriceLowTariff;
     networkCost =
-      netHighTariff * (tariff.distributionHighTariff + tariff.transmissionHighTariff) +
-      netLowTariff * (tariff.distributionLowTariff + tariff.transmissionLowTariff);
-    const surplusHighTariff = Math.max(feedInHighTariff - consumedHighTariff, 0);
-    const surplusLowTariff = Math.max(feedInLowTariff - consumedLowTariff, 0);
+      netHighTariffKwh * (tariff.distributionHighTariff + tariff.transmissionHighTariff) +
+      netLowTariffKwh * (tariff.distributionLowTariff + tariff.transmissionLowTariff);
+    const surplusHighTariff = Math.max(flows.exportHighTariffKwh - flows.importHighTariffKwh, 0);
+    const surplusLowTariff = Math.max(flows.exportLowTariffKwh - flows.importLowTariffKwh, 0);
     surplusKwh = surplusHighTariff + surplusLowTariff;
     surplusCreditEur =
       surplusHighTariff * tariff.energyPriceHighTariff + surplusLowTariff * tariff.energyPriceLowTariff;
@@ -363,12 +391,23 @@ export function calculateBill(
     vatAmount,
     total,
     netBilledKwh,
+    netHighTariffKwh,
+    netLowTariffKwh,
     totalConsumedKwh,
     totalFeedInKwh,
     surplusKwh,
     surplusCreditEur,
     effectiveCostEur: total - surplusCreditEur,
   };
+}
+
+/** Calculate the monthly bill for a set of days of meter data */
+export function calculateBill(
+  sortedDays: string[],
+  dailyData: Record<string, DailyEnergyData>,
+  tariff: TariffPrices
+): BillBreakdown {
+  return calculateBillFromFlows(sumGridFlows(sortedDays, dailyData), tariff);
 }
 
 /**
@@ -378,44 +417,31 @@ export function calculateBill(
  * must NOT be added — it is only used as a rough proxy when production data
  * (and therefore selfConsumedKwh) is unavailable.
  */
-export function calculateBillWithoutSolar(
-  sortedDays: string[],
-  dailyData: Record<string, DailyEnergyData>,
+export function calculateBillWithoutSolarFromFlows(
+  flows: GridFlows,
   tariff: TariffPrices,
   selfConsumedKwh: number | null
 ): number {
-  const isSingleTariff = tariff.tariffModel === "single";
+  const consumedHighTariff = flows.importHighTariffKwh;
+  const consumedLowTariff = flows.importLowTariffKwh;
+  const feedInHighTariff = flows.exportHighTariffKwh;
+  const feedInLowTariff = flows.exportLowTariffKwh;
 
-  let consumedKwh = 0;
-  let feedInKwh = 0;
-  for (const dateKey of sortedDays) {
-    consumedKwh += dailyData[dateKey].consumedKwh;
-    feedInKwh += dailyData[dateKey].feedInKwh;
-  }
+  const consumedKwh = consumedHighTariff + consumedLowTariff;
+  const feedInKwh = feedInHighTariff + feedInLowTariff;
   const solarCoveredKwh = selfConsumedKwh ?? feedInKwh;
   const totalKwh = consumedKwh + solarCoveredKwh;
 
   let energyCost: number;
   let networkCost: number;
 
-  if (isSingleTariff) {
+  if (tariff.tariffModel === "single") {
     energyCost = totalKwh * tariff.energyPriceSingleTariff;
     networkCost = totalKwh * (tariff.distributionSingleTariff + tariff.transmissionSingleTariff);
   } else {
-    let consumedHighTariff = 0;
-    let consumedLowTariff = 0;
-    let feedInHighTariff = 0;
-    let feedInLowTariff = 0;
-    for (const dateKey of sortedDays) {
-      consumedHighTariff += dailyData[dateKey].consumedHighTariffKwh;
-      consumedLowTariff += dailyData[dateKey].consumedLowTariffKwh;
-      feedInHighTariff += dailyData[dateKey].feedInHighTariffKwh;
-      feedInLowTariff += dailyData[dateKey].feedInLowTariffKwh;
-    }
     /* Self-consumption happens during solar hours, so split it across VT/NT
        in the same proportion as feed-in; default to VT when there is no feed-in. */
-    const feedInTotal = feedInHighTariff + feedInLowTariff;
-    const highTariffShare = feedInTotal > 0 ? feedInHighTariff / feedInTotal : 1;
+    const highTariffShare = feedInKwh > 0 ? feedInHighTariff / feedInKwh : 1;
     const highTariffKwh = consumedHighTariff + solarCoveredKwh * highTariffShare;
     const lowTariffKwh = consumedLowTariff + solarCoveredKwh * (1 - highTariffShare);
     energyCost = highTariffKwh * tariff.energyPriceHighTariff + lowTariffKwh * tariff.energyPriceLowTariff;
@@ -424,9 +450,25 @@ export function calculateBillWithoutSolar(
       lowTariffKwh * (tariff.distributionLowTariff + tariff.transmissionLowTariff);
   }
 
+  /* No feed-in to net against, so every per-kWh item is charged on the full load */
   const solidarityCost = tariff.solidarityDiscount ? 0 : totalKwh * tariff.solidarityRate;
-  const subtotal = energyCost + networkCost + solidarityCost + totalKwh * tariff.renewableEnergyRate + tariff.supplyFee + tariff.meteringFee;
-  return subtotal + subtotal * tariff.vatRate;
+  const subtotal =
+    energyCost + networkCost + solidarityCost + totalKwh * tariff.renewableEnergyRate +
+    tariff.supplyFee + tariff.meteringFee;
+  return subtotal * (1 + tariff.vatRate);
+}
+
+export function calculateBillWithoutSolar(
+  sortedDays: string[],
+  dailyData: Record<string, DailyEnergyData>,
+  tariff: TariffPrices,
+  selfConsumedKwh: number | null
+): number {
+  return calculateBillWithoutSolarFromFlows(
+    sumGridFlows(sortedDays, dailyData),
+    tariff,
+    selfConsumedKwh
+  );
 }
 
 /**
@@ -522,7 +564,20 @@ export function calculateSystemEfficiency(
     : 0;
 
   const averagePeakSunHours = dailyEfficiency.reduce((sum, d) => sum + d.peakSunHours, 0) / dailyEfficiency.length;
+
+  /* Two different specific yields, kept apart on purpose. Irradiance data does not
+     always cover the whole month (Open-Meteo's archive has gaps and limits), and PR
+     may only be computed on matched days. Reporting that partial figure as the
+     month's yield understates it — May 2026 read 101.5 instead of 142.7 kWh/kWp. */
   const specificYieldKwhPerKwp = totalActualKwh / installedKwp;
+  const productionDays = derived.days.filter(
+    (day) => (day.solarProduction > 0 ? day.solarProduction : day.feedIn) > 0
+  ).length;
+  const monthlyProductionKwh = derived.totalSolarProduction > 0
+    ? derived.totalSolarProduction
+    : derived.totalFeedIn;
+  const monthlySpecificYieldKwhPerKwp = monthlyProductionKwh / installedKwp;
+  const coveredDays = dailyEfficiency.length;
 
   let healthStatus: SystemEfficiency["healthStatus"];
   if (performanceRatioPercent >= 85) healthStatus = "excellent";
@@ -537,41 +592,31 @@ export function calculateSystemEfficiency(
     dailyEfficiency,
     averagePeakSunHours,
     specificYieldKwhPerKwp,
+    monthlySpecificYieldKwhPerKwp,
+    coveredDays,
+    productionDays,
+    isPartialCoverage: coveredDays < productionDays,
     healthStatus,
   };
 }
 
-/**
- * Seasonal irradiance index for Croatia (relative to annual average).
- * Used to normalize monthly specific yield so summer/winter differences
- * don't mask the real degradation trend.
- * Source: typical GHI distribution for continental Croatia (Zagreb area).
- */
-const SEASONAL_IRRADIANCE_INDEX: Record<number, number> = {
-  1: 0.40, 2: 0.55, 3: 0.80, 4: 1.05,
-  5: 1.30, 6: 1.45, 7: 1.50, 8: 1.35,
-  9: 1.05, 10: 0.70, 11: 0.45, 12: 0.35,
-};
-
 /** Expected annual degradation rate for crystalline silicon panels */
 const EXPECTED_DEGRADATION_RATE_PERCENT = 0.5;
 
-/** Minimum months of data needed for a reliable degradation estimate */
-const MIN_MONTHS_FOR_RELIABLE_TREND = 12;
+/** Same-month pairs needed before the degradation estimate is worth trusting */
+const MIN_COMPARISONS_FOR_RELIABLE_TREND = 6;
 
 /**
- * Minimum time span (in months) between first and last data point.
- * Degradation analysis across a single season is misleading even with
- * seasonal normalization, so we require at least 12 months of span.
- */
-const MIN_SPAN_MONTHS = 12;
-
-/**
- * Analyze panel degradation across all cached months.
- * Uses seasonally-normalized specific yield (kWh/kWp) and fits a linear
- * regression to estimate annual degradation rate.
- * Returns null if fewer than 12 months of span — seasonal normalization
- * is unreliable over shorter periods.
+ * Analyze panel degradation across all cached months by comparing each calendar
+ * month against the same calendar month in another year.
+ *
+ * Deliberately avoids any hardcoded seasonal index. A fixed "typical Croatia"
+ * curve cannot match a specific roof — orientation, shading, winter fog and snow
+ * make a real site diverge from it by a factor of two or more, and that error
+ * lands directly on the degradation number. Comparing June to June cancels
+ * seasonality exactly, with no model to be wrong about.
+ *
+ * Returns null when no calendar month appears in two different years.
  */
 export function calculateDegradation(
   cachedMonths: CachedMonthData[],
@@ -604,77 +649,82 @@ export function calculateDegradation(
 
     if (productionKwh <= 0) continue;
 
-    const specificYield = productionKwh / installedKwp;
-
     monthlyPoints.push({
       monthKey: cached.monthKey,
       productionKwh,
-      specificYieldKwhPerKwp: specificYield,
+      specificYieldKwhPerKwp: productionKwh / installedKwp,
       hasFusionSolar: cached.hasFusionSolar,
     });
   }
 
   if (monthlyPoints.length < 2) return null;
 
-  /* Sort chronologically */
   monthlyPoints.sort((a, b) => a.monthKey.localeCompare(b.monthKey));
 
-  /* Require at least MIN_SPAN_MONTHS between first and last data point.
-     Seasonal normalization is unreliable over shorter periods. */
+  /* Group by calendar month so we only ever compare like with like. Mixing
+     FusionSolar production with feed-in proxy would compare different
+     quantities, so those points are not paired against each other. */
+  const pointsByCalendarMonth = new Map<number, DegradationMonthPoint[]>();
+  for (const point of monthlyPoints) {
+    const monthNum = parseInt(point.monthKey.slice(5, 7));
+    const bucket = pointsByCalendarMonth.get(monthNum) ?? [];
+    bucket.push(point);
+    pointsByCalendarMonth.set(monthNum, bucket);
+  }
+
+  const comparisons: YearOverYearComparison[] = [];
+  for (const [month, points] of pointsByCalendarMonth) {
+    for (let i = 1; i < points.length; i++) {
+      const earlier = points[i - 1];
+      const later = points[i];
+      if (earlier.hasFusionSolar !== later.hasFusionSolar) continue;
+      if (earlier.specificYieldKwhPerKwp <= 0) continue;
+
+      const yearsApart =
+        parseInt(later.monthKey.slice(0, 4)) - parseInt(earlier.monthKey.slice(0, 4));
+      if (yearsApart <= 0) continue;
+
+      /* Annualize the ratio so a 2-year gap is not counted as a 1-year drop */
+      const ratio = later.specificYieldKwhPerKwp / earlier.specificYieldKwhPerKwp;
+      const annualChangePercent = (1 - Math.pow(ratio, 1 / yearsApart)) * 100;
+
+      comparisons.push({
+        month,
+        earlierMonthKey: earlier.monthKey,
+        laterMonthKey: later.monthKey,
+        earlierYieldKwhPerKwp: earlier.specificYieldKwhPerKwp,
+        laterYieldKwhPerKwp: later.specificYieldKwhPerKwp,
+        yearsApart,
+        annualChangePercent,
+      });
+    }
+  }
+
+  if (comparisons.length === 0) return null;
+
+  const rates = comparisons.map((comparison) => comparison.annualChangePercent);
+  const annualDegradationRatePercent = rates.reduce((sum, rate) => sum + rate, 0) / rates.length;
+
+  /* Report the spread so a single noisy pair cannot masquerade as precision */
+  const variance =
+    rates.reduce((sum, rate) => sum + Math.pow(rate - annualDegradationRatePercent, 2), 0) /
+    rates.length;
+  const uncertaintyPercent = Math.sqrt(variance);
+
   const firstMonthKey = monthlyPoints[0].monthKey;
   const lastMonthKey = monthlyPoints[monthlyPoints.length - 1].monthKey;
-  const firstYear = parseInt(firstMonthKey.slice(0, 4));
-  const firstMonthNum = parseInt(firstMonthKey.slice(5, 7));
-  const lastYear = parseInt(lastMonthKey.slice(0, 4));
-  const lastMonthNum = parseInt(lastMonthKey.slice(5, 7));
-  const spanMonths = (lastYear - firstYear) * 12 + (lastMonthNum - firstMonthNum) + 1;
-  if (spanMonths < MIN_SPAN_MONTHS) return null;
-
-  /* Normalize specific yield by seasonal index to remove weather seasonality */
-  const normalizedYields: { monthIndex: number; normalizedYield: number }[] = [];
-
-  for (const point of monthlyPoints) {
-    const year = parseInt(point.monthKey.slice(0, 4));
-    const monthNum = parseInt(point.monthKey.slice(5, 7));
-    /* Month index from start (0-based) */
-    const monthIndex = (year - firstYear) * 12 + (monthNum - firstMonthNum);
-    const seasonalFactor = SEASONAL_IRRADIANCE_INDEX[monthNum] || 1.0;
-    /* Normalize: divide by seasonal factor so all months are comparable */
-    const normalizedYield = point.specificYieldKwhPerKwp / seasonalFactor;
-    normalizedYields.push({ monthIndex, normalizedYield });
-  }
-
-  /* Simple linear regression: normalizedYield = slope * monthIndex + intercept */
-  const n = normalizedYields.length;
-  let sumX = 0;
-  let sumY = 0;
-  let sumXY = 0;
-  let sumXX = 0;
-  for (const { monthIndex, normalizedYield } of normalizedYields) {
-    sumX += monthIndex;
-    sumY += normalizedYield;
-    sumXY += monthIndex * normalizedYield;
-    sumXX += monthIndex * monthIndex;
-  }
-
-  const denominator = n * sumXX - sumX * sumX;
-  /* Prevent division by zero when all points share the same month index */
-  const slope = denominator !== 0 ? (n * sumXY - sumX * sumY) / denominator : 0;
-  const intercept = (sumY - slope * sumX) / n;
-
-  /* Convert monthly slope to annual degradation rate as percentage of initial yield */
-  const initialYield = intercept > 0 ? intercept : normalizedYields[0].normalizedYield;
-  const annualDegradationRatePercent = initialYield > 0
-    ? -(slope * 12 / initialYield) * 100
-    : 0;
+  const spanMonths =
+    (parseInt(lastMonthKey.slice(0, 4)) - parseInt(firstMonthKey.slice(0, 4))) * 12 +
+    (parseInt(lastMonthKey.slice(5, 7)) - parseInt(firstMonthKey.slice(5, 7))) +
+    1;
 
   return {
     monthlyPoints,
+    comparisons: comparisons.sort((a, b) => a.month - b.month),
     annualDegradationRatePercent,
-    isReliable: monthlyPoints.length >= MIN_MONTHS_FOR_RELIABLE_TREND,
+    uncertaintyPercent,
+    isReliable: comparisons.length >= MIN_COMPARISONS_FOR_RELIABLE_TREND,
     expectedDegradationRatePercent: EXPECTED_DEGRADATION_RATE_PERCENT,
-    trendSlopePerMonth: slope,
-    trendIntercept: intercept,
     firstMonth: firstMonthKey,
     lastMonth: lastMonthKey,
     totalMonths: spanMonths,
@@ -799,45 +849,121 @@ export function analyzeLoadShifting(
   };
 }
 
-/**
- * Seasonal solar production weights relative to annual average.
- * Based on typical Croatian solar irradiance distribution.
- * Index 0 = January, 11 = December. Weights sum to 12.0.
- */
-const SEASONAL_WEIGHTS = [0.4, 0.55, 0.85, 1.1, 1.35, 1.5, 1.55, 1.4, 1.15, 0.85, 0.5, 0.3];
 const MONTHS_IN_YEAR = 12;
+
+/**
+ * Monthly share of annual PV yield for continental Croatia (Zagreb area),
+ * index 0 = January. Only the *shape* matters — the values are normalized
+ * below so the weights always average 1.0, which is what every consumer
+ * assumes. Hand-maintained lists that "should sum to 12" silently drift;
+ * normalizing in code makes that impossible.
+ */
+const SEASONAL_YIELD_SHARE = [3.2, 4.7, 7.8, 9.9, 11.7, 12.5, 13.6, 12.7, 9.7, 7.1, 3.7, 2.6];
+
+/** Seasonal weights relative to an average month — sum to exactly 12 by construction */
+const SEASONAL_WEIGHTS = (() => {
+  const total = SEASONAL_YIELD_SHARE.reduce((sum, share) => sum + share, 0);
+  return SEASONAL_YIELD_SHARE.map((share) => (share / total) * MONTHS_IN_YEAR);
+})();
+
 const MAX_PROJECTION_YEARS = 25;
 const MAX_PROJECTION_MONTHS = MAX_PROJECTION_YEARS * MONTHS_IN_YEAR;
 
+/** Assumed annual rise in electricity prices — savings track the price you avoid paying */
+const ANNUAL_PRICE_INFLATION_PERCENT = 2.0;
+/** Assumed annual panel output loss, matching the crystalline-silicon expectation */
+const ANNUAL_PANEL_DEGRADATION_PERCENT = 0.5;
+/** Discount rate for the discounted payback — the return the money could earn elsewhere */
+const ANNUAL_DISCOUNT_RATE_PERCENT = 3.0;
+
 /**
- * Calculate ROI and payback projections based on measured monthly savings
- * and seasonal weighting for Croatian solar conditions.
+ * Build a savings figure for each of the 12 calendar months.
+ *
+ * Measured months are used as-is (averaged when the same calendar month appears
+ * in several years). Months never measured are filled from the seasonal shape,
+ * scaled so it matches the measured months overall — a least-squares style fit
+ * across everything known rather than extrapolating from one arbitrary month.
+ *
+ * This matters: savings are capped by the bill and floored by net-metering, so
+ * they do NOT scale with production. Extrapolating an annual figure from a single
+ * month swings the answer by more than 2x depending on which month is open.
+ */
+function buildCalendarMonthSavings(
+  measuredMonths: MeasuredMonthSavings[],
+  fallbackSavingsEur: number,
+  fallbackMonth: number
+): CalendarMonthSavings[] {
+  const savingsByMonth = new Map<number, number[]>();
+  for (const measured of measuredMonths) {
+    const month = parseInt(measured.monthKey.slice(5, 7));
+    if (!(month >= 1 && month <= MONTHS_IN_YEAR)) continue;
+    const bucket = savingsByMonth.get(month) ?? [];
+    bucket.push(measured.savingsEur);
+    savingsByMonth.set(month, bucket);
+  }
+
+  const averageFor = (month: number) => {
+    const values = savingsByMonth.get(month);
+    if (!values || values.length === 0) return null;
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+  };
+
+  /* Fit the seasonal shape to whatever has actually been measured */
+  let measuredSavingsTotal = 0;
+  let measuredWeightTotal = 0;
+  for (let month = 1; month <= MONTHS_IN_YEAR; month++) {
+    const average = averageFor(month);
+    if (average === null) continue;
+    measuredSavingsTotal += average;
+    measuredWeightTotal += SEASONAL_WEIGHTS[month - 1];
+  }
+
+  const fallbackWeight = SEASONAL_WEIGHTS[fallbackMonth - 1];
+  const seasonalScale = (() => {
+    if (measuredWeightTotal > 0) return measuredSavingsTotal / measuredWeightTotal;
+    if (fallbackWeight > 0) return fallbackSavingsEur / fallbackWeight;
+    return fallbackSavingsEur;
+  })();
+
+  const result: CalendarMonthSavings[] = [];
+  for (let month = 1; month <= MONTHS_IN_YEAR; month++) {
+    const average = averageFor(month);
+    result.push({
+      month,
+      savingsEur: average ?? seasonalScale * SEASONAL_WEIGHTS[month - 1],
+      isMeasured: average !== null,
+    });
+  }
+  return result;
+}
+
+/**
+ * Calculate ROI and payback projections.
+ *
+ * Uses every measured month available and only falls back to the seasonal shape
+ * for months that have never been fetched. The projection accounts for rising
+ * electricity prices, panel degradation, and the time value of money.
  */
 export function calculateRoi(
   measuredMonthlySavingsEur: number,
   selectedMonth: MonthSelection,
   systemCostEur: number,
-  installationDate: string
+  installationDate: string,
+  measuredMonths: MeasuredMonthSavings[] = []
 ): RoiAnalysis {
-  /* Derive base monthly savings (seasonally normalized) */
-  const monthIndex = selectedMonth.month - 1;
-  const currentSeasonalWeight = SEASONAL_WEIGHTS[monthIndex];
-  /* Normalize measured savings to an "average month" baseline */
-  const normalizedMonthlySavings = currentSeasonalWeight > 0
-    ? measuredMonthlySavingsEur / currentSeasonalWeight
-    : measuredMonthlySavingsEur;
+  const calendarMonthSavings = buildCalendarMonthSavings(
+    measuredMonths,
+    measuredMonthlySavingsEur,
+    selectedMonth.month
+  );
+  const savingsForMonth = (monthIndexZeroBased: number) =>
+    calendarMonthSavings[monthIndexZeroBased].savingsEur;
 
-  /* Estimated annual savings using seasonal distribution */
-  let estimatedAnnualSavingsEur = 0;
-  for (let i = 0; i < MONTHS_IN_YEAR; i++) {
-    estimatedAnnualSavingsEur += normalizedMonthlySavings * SEASONAL_WEIGHTS[i];
-  }
-
-  /* Average monthly savings for payback calculation */
-  const averageMonthlySavings = estimatedAnnualSavingsEur / MONTHS_IN_YEAR;
-  const paybackMonths = averageMonthlySavings > 0
-    ? Math.ceil(systemCostEur / averageMonthlySavings)
-    : 0;
+  const estimatedAnnualSavingsEur = calendarMonthSavings.reduce(
+    (sum, entry) => sum + entry.savingsEur,
+    0
+  );
+  const measuredMonthCount = calendarMonthSavings.filter((entry) => entry.isMeasured).length;
 
   const annualRoiPercent = systemCostEur > 0
     ? (estimatedAnnualSavingsEur / systemCostEur) * 100
@@ -853,46 +979,74 @@ export function calculateRoi(
       + (now.getMonth() - installDate.getMonth());
     if (monthsElapsed < 0) monthsElapsed = 0;
 
-    /* Estimate cumulative savings from installation to now using seasonal weights */
     for (let i = 0; i < monthsElapsed; i++) {
-      const projectedMonth = new Date(installDate.getFullYear(), installDate.getMonth() + i, 1);
-      const weight = SEASONAL_WEIGHTS[projectedMonth.getMonth()];
-      estimatedCumulativeSavingsEur += normalizedMonthlySavings * weight;
+      const elapsedMonth = new Date(installDate.getFullYear(), installDate.getMonth() + i, 1);
+      estimatedCumulativeSavingsEur += savingsForMonth(elapsedMonth.getMonth());
     }
   }
 
-  /* Build projection series: from installation month until payback (or max 25 years) */
-  const projections: RoiMonthProjection[] = [];
+  /* Build projection series: from installation month until payback (or max 25 years).
+     Savings grow with electricity prices and shrink with panel degradation; the
+     discounted series values future euros at today's money. */
+  const priceInflation = ANNUAL_PRICE_INFLATION_PERCENT / 100;
+  const panelDegradation = ANNUAL_PANEL_DEGRADATION_PERCENT / 100;
+  const discountRate = ANNUAL_DISCOUNT_RATE_PERCENT / 100;
+
   const startDate = installationDate
     ? new Date(installationDate)
     : new Date(selectedMonth.year, selectedMonth.month - 1, 1);
-  const projectionLength = Math.min(
-    Math.max(paybackMonths + MONTHS_IN_YEAR, monthsElapsed + MONTHS_IN_YEAR * 2),
-    MAX_PROJECTION_MONTHS
-  );
 
+  const projections: RoiMonthProjection[] = [];
   let cumulative = 0;
-  for (let i = 0; i < projectionLength; i++) {
-    const projectedDate = new Date(startDate.getFullYear(), startDate.getMonth() + i, 1);
-    const weight = SEASONAL_WEIGHTS[projectedDate.getMonth()];
-    const monthlySavings = normalizedMonthlySavings * weight;
-    cumulative += monthlySavings;
+  let discountedCumulative = 0;
+  let paybackMonths = 0;
+  let discountedPaybackMonths = 0;
 
-    const label = `${projectedDate.getFullYear()}-${String(projectedDate.getMonth() + 1).padStart(2, "0")}`;
+  for (let i = 0; i < MAX_PROJECTION_MONTHS; i++) {
+    const projectedDate = new Date(startDate.getFullYear(), startDate.getMonth() + i, 1);
+    const yearsFromStart = i / MONTHS_IN_YEAR;
+    const monthlySavings =
+      savingsForMonth(projectedDate.getMonth()) *
+      Math.pow(1 + priceInflation, yearsFromStart) *
+      Math.pow(1 - panelDegradation, yearsFromStart);
+
+    cumulative += monthlySavings;
+    discountedCumulative += monthlySavings / Math.pow(1 + discountRate, yearsFromStart);
+
+    if (paybackMonths === 0 && systemCostEur > 0 && cumulative >= systemCostEur) {
+      paybackMonths = i + 1;
+    }
+    if (discountedPaybackMonths === 0 && systemCostEur > 0 && discountedCumulative >= systemCostEur) {
+      discountedPaybackMonths = i + 1;
+    }
+
     projections.push({
-      label,
+      label: `${projectedDate.getFullYear()}-${String(projectedDate.getMonth() + 1).padStart(2, "0")}`,
       monthlySavingsEur: monthlySavings,
       cumulativeSavingsEur: cumulative,
+      discountedCumulativeSavingsEur: discountedCumulative,
     });
+
+    /* Stop a year past payback, but always cover the elapsed period plus two years */
+    const hasBothPaybacks = paybackMonths > 0 && discountedPaybackMonths > 0;
+    const isPastPaybackTail = hasBothPaybacks && i >= discountedPaybackMonths + MONTHS_IN_YEAR;
+    const coversElapsed = i >= monthsElapsed + MONTHS_IN_YEAR * 2;
+    if (isPastPaybackTail && coversElapsed) break;
   }
 
   return {
     measuredMonthlySavingsEur,
     estimatedAnnualSavingsEur,
+    calendarMonthSavings,
+    measuredMonthCount,
     paybackMonths,
+    discountedPaybackMonths,
     annualRoiPercent,
     monthsElapsed,
     estimatedCumulativeSavingsEur,
+    priceInflationPercent: ANNUAL_PRICE_INFLATION_PERCENT,
+    panelDegradationPercent: ANNUAL_PANEL_DEGRADATION_PERCENT,
+    discountRatePercent: ANNUAL_DISCOUNT_RATE_PERCENT,
     projections,
   };
 }
@@ -921,6 +1075,7 @@ export function computeMonthSummary(
 
   return {
     monthKey: cached.monthKey,
+    analyzedDays: cached.sortedDays.length,
     totalFeedInKwh: derived.totalFeedIn,
     totalConsumedKwh: derived.totalConsumed,
     totalSolarProductionKwh: derived.totalSolarProduction,
@@ -971,13 +1126,18 @@ export function calculateGhiScaleFactors(
   historicalDays: WeatherDayRadiation[],
   forecastDays: WeatherDayRadiation[]
 ): Record<string, number> {
-  const historicalTotal = historicalDays.reduce((sum, day) => sum + day.dailyGhiWh, 0);
-  const historicalAvg = historicalDays.length > 0 ? historicalTotal / historicalDays.length : 0;
+  /* Days with zero GHI are almost always API gaps, not genuinely sunless days —
+     Open-Meteo returns nulls past its archive window. Averaging them in drags the
+     baseline down and makes every forecast day look sunnier than average. */
+  const validHistorical = historicalDays.filter((day) => day.dailyGhiWh > 0);
+  const historicalTotal = validHistorical.reduce((sum, day) => sum + day.dailyGhiWh, 0);
+  const historicalAvg = validHistorical.length > 0 ? historicalTotal / validHistorical.length : 0;
 
   if (historicalAvg <= 0) return {};
 
   const scaleFactors: Record<string, number> = {};
   for (const day of forecastDays) {
+    if (day.dailyGhiWh <= 0) continue;
     const raw = day.dailyGhiWh / historicalAvg;
     scaleFactors[day.date] = Math.max(MIN_WEATHER_SCALE, Math.min(MAX_WEATHER_SCALE, raw));
   }
@@ -992,8 +1152,9 @@ export function calculateGhiScaleFactors(
 export function calculateForecast(
   selectedMonth: MonthSelection,
   derived: DerivedMonthlyData,
-  bill: BillBreakdown | null,
-  billWithoutSolar: number | null,
+  dailyData: Record<string, DailyEnergyData>,
+  tariff: TariffPrices,
+  hasConsumption: boolean,
   hasFusionSolar: boolean,
   weatherScaleFactors?: Record<string, number>
 ): MonthForecast | null {
@@ -1032,10 +1193,13 @@ export function calculateForecast(
     ? forecastBasis.reduce((sum, day) => sum + day.solarProduction, 0) / basisCount
     : 0;
   const averageDailyFeedInKwh = forecastBasis.reduce((sum, day) => sum + day.feedIn, 0) / basisCount;
-  const averageDailyConsumedKwh = forecastBasis.reduce((sum, day) => sum + day.consumed, 0) / basisCount;
   const averageDailySelfConsumedKwh = hasFusionSolar
     ? forecastBasis.reduce((sum, day) => sum + day.selfConsumed, 0) / basisCount
     : 0;
+  /* Household consumption has no reason to follow sunshine, so it always averages
+     over every active day — never over the sunny-day subset used for production. */
+  const averageDailyConsumedKwh =
+    activeDays.reduce((sum, day) => sum + day.consumed, 0) / analyzedDays;
 
   /* Build daily chart series and accumulate projected totals */
   const dailySeries: ForecastDayEntry[] = [];
@@ -1091,18 +1255,41 @@ export function calculateForecast(
     ? (projectedSelfConsumedKwh / projectedHousehold) * 100
     : 0;
 
-  /* Project bill — scale only the consumption-driven part; fixed monthly fees
-     (supply + metering) don't grow with days */
+  /* Project the bill by re-running the real billing engine on projected kWh, never
+     by scaling euros. Net metering charges max(import − export, 0), so cost is not
+     proportional to days: a month that is net-import at day 10 can finish at net
+     zero, and linear scaling would invent a bill that never arrives. */
   let projectedBillEur = 0;
   let projectedSavingsEur = 0;
-  if (bill && billWithoutSolar !== null) {
-    const scaleFactor = totalDaysInMonth / analyzedDays;
-    const vatFactor = bill.subtotal > 0 ? 1 + bill.vatAmount / bill.subtotal : 1;
-    const fixedCostsWithVat = bill.fixedCosts * vatFactor;
-    const variableCostWithVat = bill.total - fixedCostsWithVat;
-    projectedBillEur = fixedCostsWithVat + variableCostWithVat * scaleFactor;
-    /* Fixed fees cancel in the savings difference; use real cost incl. surplus payout */
-    projectedSavingsEur = (billWithoutSolar - bill.effectiveCostEur) * scaleFactor;
+  if (hasConsumption) {
+    const actualFlows = sumGridFlows(
+      activeDays.map((day) => day.date),
+      dailyData
+    );
+    /* Split each projected day across VT/NT in the same proportion the month has
+       shown so far — the tariff windows move with daylight saving, not per day. */
+    const actualImport = actualFlows.importHighTariffKwh + actualFlows.importLowTariffKwh;
+    const actualExport = actualFlows.exportHighTariffKwh + actualFlows.exportLowTariffKwh;
+    const importHighShare = actualImport > 0 ? actualFlows.importHighTariffKwh / actualImport : 0.5;
+    const exportHighShare = actualExport > 0 ? actualFlows.exportHighTariffKwh / actualExport : 1;
+
+    const projectedFlows: GridFlows = {
+      importHighTariffKwh: actualFlows.importHighTariffKwh + projectedConsumedSum * importHighShare,
+      importLowTariffKwh: actualFlows.importLowTariffKwh + projectedConsumedSum * (1 - importHighShare),
+      exportHighTariffKwh: actualFlows.exportHighTariffKwh + projectedFeedInSum * exportHighShare,
+      exportLowTariffKwh: actualFlows.exportLowTariffKwh + projectedFeedInSum * (1 - exportHighShare),
+    };
+
+    const projectedBill = calculateBillFromFlows(projectedFlows, tariff);
+    projectedBillEur = projectedBill.total;
+
+    /* Without panels the household would draw its own load from the grid instead */
+    const projectedBillWithoutSolar = calculateBillWithoutSolarFromFlows(
+      projectedFlows,
+      tariff,
+      hasFusionSolar ? projectedSelfConsumedKwh : null
+    );
+    projectedSavingsEur = projectedBillWithoutSolar - projectedBill.effectiveCostEur;
   }
 
   return {
@@ -1135,53 +1322,6 @@ export const BATTERY_PRESETS: { label: string; config: BatteryConfig }[] = [
 /** Approximate battery cost per kWh for ROI estimate (€) */
 const BATTERY_COST_PER_KWH_EUR = 500;
 
-/** Grid energy flows split by tariff band */
-interface GridFlows {
-  importHighTariffKwh: number;
-  importLowTariffKwh: number;
-  exportHighTariffKwh: number;
-  exportLowTariffKwh: number;
-}
-
-/**
- * Real monthly cost for given grid flows under samoopskrba net metering:
- * netted per-kWh items + fixed fees + VAT, minus the surplus payout (otkup)
- * at the energy tariff. Mirrors calculateBill, but works on arbitrary flows
- * so battery scenarios can be priced consistently.
- */
-function computeNetBillingCost(flows: GridFlows, tariff: TariffPrices): number {
-  const importTotalKwh = flows.importHighTariffKwh + flows.importLowTariffKwh;
-  const exportTotalKwh = flows.exportHighTariffKwh + flows.exportLowTariffKwh;
-
-  let energyCost: number;
-  let networkCost: number;
-  let netTotalKwh: number;
-  let surplusCreditEur: number;
-
-  if (tariff.tariffModel === "single") {
-    netTotalKwh = Math.max(importTotalKwh - exportTotalKwh, 0);
-    energyCost = netTotalKwh * tariff.energyPriceSingleTariff;
-    networkCost = netTotalKwh * (tariff.distributionSingleTariff + tariff.transmissionSingleTariff);
-    surplusCreditEur = Math.max(exportTotalKwh - importTotalKwh, 0) * tariff.energyPriceSingleTariff;
-  } else {
-    const netHighKwh = Math.max(flows.importHighTariffKwh - flows.exportHighTariffKwh, 0);
-    const netLowKwh = Math.max(flows.importLowTariffKwh - flows.exportLowTariffKwh, 0);
-    netTotalKwh = netHighKwh + netLowKwh;
-    energyCost = netHighKwh * tariff.energyPriceHighTariff + netLowKwh * tariff.energyPriceLowTariff;
-    networkCost =
-      netHighKwh * (tariff.distributionHighTariff + tariff.transmissionHighTariff) +
-      netLowKwh * (tariff.distributionLowTariff + tariff.transmissionLowTariff);
-    const surplusHighKwh = Math.max(flows.exportHighTariffKwh - flows.importHighTariffKwh, 0);
-    const surplusLowKwh = Math.max(flows.exportLowTariffKwh - flows.importLowTariffKwh, 0);
-    surplusCreditEur =
-      surplusHighKwh * tariff.energyPriceHighTariff + surplusLowKwh * tariff.energyPriceLowTariff;
-  }
-
-  const solidarityCost = tariff.solidarityDiscount ? 0 : netTotalKwh * tariff.solidarityRate;
-  const renewableCost = netTotalKwh * tariff.renewableEnergyRate;
-  const subtotal = energyCost + networkCost + solidarityCost + renewableCost + tariff.supplyFee + tariff.meteringFee;
-  return subtotal * (1 + tariff.vatRate) - surplusCreditEur;
-}
 
 /**
  * Simulate hour-by-hour battery charge/discharge for the month.
@@ -1205,9 +1345,11 @@ export function simulateBattery(
   let totalEnergyDischargedKwh = 0;
   let totalGridImportWithBatteryKwh = 0;
   let totalGridExportWithBatteryKwh = 0;
-  let totalSelfConsumedWithBatteryKwh = 0;
-  let totalGenerationKwh = 0;
-  let totalConsumptionKwh = 0;
+  let totalGridFeedInKwh = 0;
+  let totalGridDrawKwh = 0;
+  /* AC-side energy in and out of the battery — their difference is the round-trip loss */
+  let totalAcIntoBatteryKwh = 0;
+  let totalAcFromBatteryKwh = 0;
 
   /* Tariff-band grid flows for cost comparison: with battery vs actual (without) */
   const flowsWithBattery: GridFlows = {
@@ -1247,10 +1389,13 @@ export function simulateBattery(
       const conKwh = (sample ? sample.consumption : 0) * QUARTER_HOUR_FACTOR;
       const isHighTariff = hour >= dayTariffWindow.startHour && hour < dayTariffWindow.endHour;
 
-      totalGenerationKwh += genKwh;
-      totalConsumptionKwh += conKwh;
+      totalGridFeedInKwh += genKwh;
+      totalGridDrawKwh += conKwh;
 
-      /* Net surplus or deficit this hour */
+      /* Net surplus or deficit this hour. HEP export and import are never truly
+         simultaneous at 15-min resolution, but a real battery would absorb an
+         export and release it minutes later, so netting within the hour is the
+         right approximation for battery behaviour. */
       const surplus = genKwh - conKwh;
       let chargedKwh = 0;
       let dischargedKwh = 0;
@@ -1258,35 +1403,34 @@ export function simulateBattery(
       let gridExportKwh = 0;
 
       if (surplus > 0) {
-        /* Excess solar — charge battery first, export remainder */
+        /* Excess solar — charge battery first, export remainder.
+           Both rate limits are applied on the AC side, so charge and discharge
+           caps mean the same thing (inverter power, not cell-side energy). */
         const availableCapacity = battery.capacityKwh - stateOfChargeKwh;
-        const maxCharge = Math.min(surplus * chargeEfficiency, battery.maxChargeRateKw * chargeEfficiency, availableCapacity);
-        chargedKwh = Math.max(maxCharge, 0);
+        const acAvailableKwh = Math.min(surplus, battery.maxChargeRateKw * HOURS_PER_STEP);
+        chargedKwh = Math.max(Math.min(acAvailableKwh * chargeEfficiency, availableCapacity), 0);
         stateOfChargeKwh += chargedKwh;
         totalEnergyStoredKwh += chargedKwh;
 
         /* Remaining surplus goes to grid */
         const usedForCharging = chargedKwh / chargeEfficiency;
+        totalAcIntoBatteryKwh += usedForCharging;
         gridExportKwh = surplus - usedForCharging;
       } else {
         /* Deficit — discharge battery first, import remainder from grid */
         const deficit = -surplus;
-        const maxDischarge = Math.min(stateOfChargeKwh, battery.maxDischargeRateKw, deficit / dischargeEfficiency);
-        dischargedKwh = Math.max(maxDischarge, 0);
+        const acWantedKwh = Math.min(deficit, battery.maxDischargeRateKw * HOURS_PER_STEP);
+        dischargedKwh = Math.max(Math.min(acWantedKwh / dischargeEfficiency, stateOfChargeKwh), 0);
         stateOfChargeKwh -= dischargedKwh;
         totalEnergyDischargedKwh += dischargedKwh;
 
         const coveredByBattery = dischargedKwh * dischargeEfficiency;
+        totalAcFromBatteryKwh += coveredByBattery;
         gridImportKwh = Math.max(deficit - coveredByBattery, 0);
       }
 
       totalGridImportWithBatteryKwh += gridImportKwh;
       totalGridExportWithBatteryKwh += gridExportKwh;
-
-      /* Self-consumed = generation used directly + battery discharge covering consumption */
-      const directSelfConsumed = Math.min(genKwh, conKwh);
-      const batteryContribution = dischargedKwh * dischargeEfficiency;
-      totalSelfConsumedWithBatteryKwh += directSelfConsumed + batteryContribution;
 
       /* Tariff-split grid flows for cost comparison; without battery the meter
          flows are simply consumption (import) and generation (export) */
@@ -1337,24 +1481,47 @@ export function simulateBattery(
   /* Price both scenarios with the same net-metering cost model (incl. surplus payout).
      Under full netting a battery shrinks import and export together, so savings are
      typically near zero or negative due to round-trip losses — that is the honest result. */
-  const billWithBatteryEur = computeNetBillingCost(flowsWithBattery, tariff);
-  const billWithoutBatteryEur = totalConsumptionKwh > 0 || totalGenerationKwh > 0
-    ? computeNetBillingCost(flowsWithoutBattery, tariff)
+  const billWithBatteryEur = calculateBillFromFlows(flowsWithBattery, tariff).effectiveCostEur;
+  const billWithoutBatteryEur = totalGridDrawKwh > 0 || totalGridFeedInKwh > 0
+    ? calculateBillFromFlows(flowsWithoutBattery, tariff).effectiveCostEur
     : 0;
   const totalGridImportWithoutBatteryKwh = derived.totalConsumed;
 
   const monthlySavingsEur = billWithoutBatteryEur - billWithBatteryEur;
 
-  /* Self-consumption and self-sufficiency rates */
-  const selfConsumptionWithoutBatteryPercent = totalGenerationKwh > 0
-    ? (derived.totalSelfConsumed / totalGenerationKwh) * 100
-    : 0;
-  const selfConsumptionWithBatteryPercent = totalGenerationKwh > 0
-    ? Math.min((totalSelfConsumedWithBatteryKwh / totalGenerationKwh) * 100, 100)
-    : 0;
-  const selfSufficiencyWithBatteryPercent = totalConsumptionKwh > 0
-    ? Math.min(((totalConsumptionKwh - totalGridImportWithBatteryKwh) / totalConsumptionKwh) * 100, 100)
-    : 0;
+  /* Round-trip loss: AC energy pushed into the battery that never came back out.
+     Energy still sitting in the battery at month end counts here too — for a
+     monthly view it has not served any load. */
+  const totalBatteryLossKwh = Math.max(totalAcIntoBatteryKwh - totalAcFromBatteryKwh, 0);
+
+  /* Self-consumption and self-sufficiency are shares of GROSS PANEL PRODUCTION and
+     of HOUSEHOLD LOAD — never of grid feed-in or grid draw, which is what the meter
+     alone reports. Without FusionSolar production the ratios are simply unknowable.
+     Solar retained on site = production − export; of that, the round-trip loss never
+     reaches a load, so it must come off before comparing against household load. */
+  const productionKwh = derived.totalSolarProduction;
+  const householdLoadKwh = derived.totalHousehold;
+  const hasProductionData = productionKwh > 0 && householdLoadKwh > 0;
+
+  const selfConsumedWithoutBatteryKwh = derived.totalSelfConsumed;
+  const selfConsumedWithBatteryKwh = Math.max(
+    productionKwh - totalGridExportWithBatteryKwh - totalBatteryLossKwh,
+    0
+  );
+
+  const toPercentOf = (value: number, total: number) => Math.min((value / total) * 100, 100);
+  const selfConsumptionWithoutBatteryPercent = hasProductionData
+    ? toPercentOf(selfConsumedWithoutBatteryKwh, productionKwh)
+    : null;
+  const selfConsumptionWithBatteryPercent = hasProductionData
+    ? toPercentOf(selfConsumedWithBatteryKwh, productionKwh)
+    : null;
+  const selfSufficiencyWithoutBatteryPercent = hasProductionData
+    ? toPercentOf(selfConsumedWithoutBatteryKwh, householdLoadKwh)
+    : null;
+  const selfSufficiencyWithBatteryPercent = hasProductionData
+    ? toPercentOf(selfConsumedWithBatteryKwh, householdLoadKwh)
+    : null;
 
   /* Annualize savings using seasonal weights */
   const currentSeasonalWeight = SEASONAL_WEIGHTS[monthIdx];
@@ -1376,6 +1543,9 @@ export function simulateBattery(
     selfConsumptionWithBatteryPercent,
     selfConsumptionWithoutBatteryPercent,
     selfSufficiencyWithBatteryPercent,
+    selfSufficiencyWithoutBatteryPercent,
+    totalBatteryLossKwh,
+    householdLoadKwh,
     totalEnergyStoredKwh,
     totalEnergyDischargedKwh,
     totalGridImportWithBatteryKwh,

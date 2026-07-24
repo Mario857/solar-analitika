@@ -107,7 +107,7 @@ export default function TariffComparison({ comparison, activeTariffModel }: Tari
             {dualTariffBill.effectiveCostEur.toFixed(2)} €
           </div>
           <div className="font-mono text-[0.55rem] text-text-dim mt-1">
-            Neto VT+NT: {dualTariffBill.netBilledKwh.toFixed(0)} kWh
+            Neto VT {dualTariffBill.netHighTariffKwh.toFixed(0)} + NT {dualTariffBill.netLowTariffKwh.toFixed(0)} kWh
           </div>
         </div>
       </div>

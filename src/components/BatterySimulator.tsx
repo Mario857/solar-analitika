@@ -101,7 +101,27 @@ export default function BatterySimulator({ sortedDays, hourlyData, derived, tari
     },
   };
 
-  const selfConGain = simulation.selfConsumptionWithBatteryPercent - simulation.selfConsumptionWithoutBatteryPercent;
+  /* Self-consumption/self-sufficiency need gross panel production, which only
+     FusionSolar provides — show "—" rather than a number derived from feed-in. */
+  const withBattery = simulation.selfConsumptionWithBatteryPercent;
+  const withoutBattery = simulation.selfConsumptionWithoutBatteryPercent;
+  const hasSelfConsumptionData = withBattery !== null && withoutBattery !== null;
+
+  const selfConsumptionContent = hasSelfConsumptionData ? (
+    <>
+      {withBattery.toFixed(0)}%
+      <span className="text-green text-[0.6rem] ml-1">
+        +{(withBattery - withoutBattery).toFixed(0)}%
+      </span>
+    </>
+  ) : (
+    <span className="text-text-dim">—</span>
+  );
+
+  const selfSufficiency = simulation.selfSufficiencyWithBatteryPercent;
+  const selfSufficiencyContent = selfSufficiency !== null
+    ? `${selfSufficiency.toFixed(0)}%`
+    : "—";
 
   // Under net metering battery savings are typically near zero or negative — color must reflect the sign
   const savingsValueColorClass = (() => {
@@ -173,10 +193,7 @@ export default function BatterySimulator({ sortedDays, hourlyData, derived, tari
         </div>
         <div className={cardBox}>
           <div className={cardLabel}>Samopotrošnja</div>
-          <div className={`${cardValue} text-cyan`}>
-            {simulation.selfConsumptionWithBatteryPercent.toFixed(0)}%
-            <span className="text-green text-[0.6rem] ml-1">+{selfConGain.toFixed(0)}%</span>
-          </div>
+          <div className={`${cardValue} text-cyan`}>{selfConsumptionContent}</div>
         </div>
       </div>
 
@@ -192,7 +209,7 @@ export default function BatterySimulator({ sortedDays, hourlyData, derived, tari
         </div>
         <div className={cardBox}>
           <div className={cardLabel}>Samodostatnost</div>
-          <div className={`${cardValue} text-cyan`}>{simulation.selfSufficiencyWithBatteryPercent.toFixed(0)}%</div>
+          <div className={`${cardValue} text-cyan`}>{selfSufficiencyContent}</div>
         </div>
       </div>
 
@@ -213,6 +230,14 @@ export default function BatterySimulator({ sortedDays, hourlyData, derived, tari
         <div className={cardBox}>
           <div className={cardLabel}>Izvoz u mrežu</div>
           <div className={`${cardValue} text-amber`}>{simulation.totalGridExportWithBatteryKwh.toFixed(1)} kWh</div>
+        </div>
+        <div className={cardBox}>
+          <div className={cardLabel}>Gubici baterije</div>
+          <div className={`${cardValue} text-red`}>{simulation.totalBatteryLossKwh.toFixed(1)} kWh</div>
+        </div>
+        <div className={cardBox}>
+          <div className={cardLabel}>Potrošnja kuće</div>
+          <div className={`${cardValue} text-purple`}>{simulation.householdLoadKwh.toFixed(1)} kWh</div>
         </div>
       </div>
 
@@ -238,6 +263,9 @@ export default function BatterySimulator({ sortedDays, hourlyData, derived, tari
         Učinkovitost: {(batteryConfig.roundTripEfficiency * 100).toFixed(0)}% round-trip.
         U modelu samoopskrbe (net metering) baterija u pravilu ne smanjuje račun: predana energija već umanjuje preuzetu 1:1,
         a višak se otkupljuje po cijeni energije. Gubici punjenja/pražnjenja mogu uštedu učiniti i negativnom.
+        Samopotrošnja i samodostatnost računaju se kao udio bruto proizvodnje panela odnosno potrošnje kuće
+        (ne predane/preuzete energije), pa su izravno usporedive s brojkama na Dashboardu.
+        Simulacija radi na satnoj razini: unutar sata se predaja i preuzimanje netiraju, što odgovara ponašanju stvarne baterije.
       </p>
     </div>
   );

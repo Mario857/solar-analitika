@@ -97,36 +97,50 @@ export default function RoiCalculator({ analysis, systemCostEur, selectedMonth, 
     ],
   };
 
-  /* Monthly savings breakdown by season (for the seasonal chart) */
+  /* Monthly savings breakdown by season — measured months are drawn apart from
+     seasonally estimated ones so the chart shows which figures are real. */
   const seasonalLabels = [
     "Sij", "Velj", "Ožu", "Tra", "Svi", "Lip",
     "Srp", "Kol", "Ruj", "Lis", "Stu", "Pro",
   ];
-  /* Extract one year of monthly savings starting from January */
-  const seasonalSavings: number[] = [];
-  for (let monthIdx = 0; monthIdx < MONTHS_IN_YEAR; monthIdx++) {
-    /* Find a projection for this calendar month */
-    const matchingProjection = analysis.projections.find((projection) => {
-      const projMonth = parseInt(projection.label.slice(5), 10);
-      return projMonth === monthIdx + 1;
-    });
-    seasonalSavings.push(matchingProjection ? +matchingProjection.monthlySavingsEur.toFixed(2) : 0);
-  }
 
   const seasonalChartData = {
     labels: seasonalLabels,
     datasets: [
       {
-        label: "Procjena uštede po mjesecu (€)",
-        data: seasonalSavings,
+        label: "Izmjereno (€)",
+        data: analysis.calendarMonthSavings.map((entry) =>
+          entry.isMeasured ? +entry.savingsEur.toFixed(2) : null
+        ),
+        borderColor: "#27c96a",
+        backgroundColor: "#27c96a30",
+        fill: true,
+        tension: 0.3,
+        pointRadius: 3,
+      },
+      {
+        label: "Procjena (€)",
+        data: analysis.calendarMonthSavings.map((entry) =>
+          entry.isMeasured ? null : +entry.savingsEur.toFixed(2)
+        ),
         borderColor: "#f0a420",
-        backgroundColor: "#f0a42030",
+        backgroundColor: "#f0a42020",
+        borderDash: [5, 3],
         fill: true,
         tension: 0.3,
         pointRadius: 2,
       },
     ],
   };
+
+  const measuredBasisText = analysis.measuredMonthCount >= MONTHS_IN_YEAR
+    ? `Sva 12 mjeseci temeljena na stvarno izmjerenim uštedama (${analysis.estimatedAnnualSavingsEur.toFixed(0)} €/god).`
+    : `${analysis.measuredMonthCount} od ${MONTHS_IN_YEAR} mjeseci temeljeno na stvarnim podacima; ostatak je procjena. Dohvatite više mjeseci u Godišnjem pregledu za točniji ROI.`;
+
+  const paybackLabel = analysis.paybackMonths > 0 ? formatMonths(analysis.paybackMonths) : "—";
+  const discountedPaybackLabel = analysis.discountedPaybackMonths > 0
+    ? formatMonths(analysis.discountedPaybackMonths)
+    : "—";
 
   const isPaybackReached = hasInstallationDate && analysis.estimatedCumulativeSavingsEur >= systemCostEur && hasSystemCost;
   const remainingToPayback = hasSystemCost
@@ -162,9 +176,8 @@ export default function RoiCalculator({ analysis, systemCostEur, selectedMonth, 
         </div>
         <div className="metric-card accent-cyan bg-surface-1 border border-border rounded-default p-3 sm:p-4">
           <div className="font-mono text-[0.6rem] uppercase tracking-wide text-text-dim mb-1">Povrat investicije</div>
-          <div className="font-mono text-lg font-bold text-cyan">
-            {analysis.paybackMonths > 0 ? formatMonths(analysis.paybackMonths) : "—"}
-          </div>
+          <div className="font-mono text-lg font-bold text-cyan">{paybackLabel}</div>
+          <div className="font-mono text-[0.55rem] text-text-dim mt-0.5">diskontirano: {discountedPaybackLabel}</div>
         </div>
         <div className="metric-card accent-purple bg-surface-1 border border-border rounded-default p-3 sm:p-4">
           <div className="font-mono text-[0.6rem] uppercase tracking-wide text-text-dim mb-1">Godišnji ROI</div>
@@ -230,8 +243,9 @@ export default function RoiCalculator({ analysis, systemCostEur, selectedMonth, 
           <Line data={seasonalChartData} options={CHART_OPTIONS} />
         </div>
         <p className={noteText}>
-          Procjena mjesečne uštede temeljena na solarnoj proizvodnji za hrvatsku klimu.
-          Ljetni mjeseci donose 3–5x veću uštedu od zimskih.
+          Zeleno = stvarno izmjerena ušteda iz dohvaćenih mjeseci. Narančasto isprekidano = procjena
+          za mjesece bez podataka. Ušteda ne raste linearno s proizvodnjom — ograničena je visinom
+          računa, pa se procjena za cijelu godinu ne izvodi iz jednog mjeseca.
         </p>
       </div>
 
@@ -242,19 +256,27 @@ export default function RoiCalculator({ analysis, systemCostEur, selectedMonth, 
           <div className="flex gap-2 items-baseline">
             <span className="font-mono text-[0.55rem] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide shrink-0 bg-amber/20 text-amber">Baza</span>
             <span className="font-mono text-xs text-text">
-              Ušteda iz analiziranog mjeseca ({analysis.measuredMonthlySavingsEur.toFixed(2)} €) normalizirana za sezonu.
+              {measuredBasisText}
             </span>
           </div>
           <div className="flex gap-2 items-baseline">
             <span className="font-mono text-[0.55rem] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide shrink-0 bg-blue/20 text-blue">Sezona</span>
             <span className="font-mono text-xs text-text">
-              Sezonski koeficijenti za hrvatsku klimu (ljeto ~1.5x, zima ~0.4x prosječnog mjeseca).
+              Mjeseci bez podataka procijenjeni su sezonskim udjelom proizvodnje za kontinentalnu Hrvatsku,
+              skaliranim tako da odgovara stvarno izmjerenim mjesecima.
             </span>
           </div>
           <div className="flex gap-2 items-baseline">
             <span className="font-mono text-[0.55rem] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide shrink-0 bg-cyan/20 text-cyan">Cijene</span>
             <span className="font-mono text-xs text-text">
-              Konstantne cijene energije (bez inflacije). Stvarni povrat može biti brži uz rast cijena.
+              Rast cijena energije {analysis.priceInflationPercent.toFixed(1)} %/god,
+              degradacija panela {analysis.panelDegradationPercent.toFixed(1)} %/god.
+            </span>
+          </div>
+          <div className="flex gap-2 items-baseline">
+            <span className="font-mono text-[0.55rem] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide shrink-0 bg-purple/20 text-purple">Diskont</span>
+            <span className="font-mono text-xs text-text">
+              Diskontirani povrat koristi stopu {analysis.discountRatePercent.toFixed(1)} %/god — vrijednost novca kroz vrijeme.
             </span>
           </div>
         </div>

@@ -46,6 +46,16 @@ export default function Cards({
   const savings = bill && billWithoutSolar !== null ? billWithoutSolar - bill.effectiveCostEur : 0;
   const peakGenerationKw = Math.max(...sortedDays.map((day) => dailyData[day].peakGenerationKw));
   const peakGenerationDay = sortedDays.find((day) => dailyData[day].peakGenerationKw === peakGenerationKw);
+  /* "05-18" next to a kW value reads as a time — spell out the date and add the
+     actual clock time, which the meter data already carries. */
+  const peakSubtitle = (() => {
+    if (!peakGenerationDay) return "kW";
+    const dayOfMonth = peakGenerationDay.slice(8, 10);
+    const month = peakGenerationDay.slice(5, 7);
+    const timeOfDay = dailyData[peakGenerationDay].peakGenerationTime;
+    const dateLabel = `${dayOfMonth}.${month}.`;
+    return timeOfDay ? `kW · ${dateLabel} u ${timeOfDay}` : `kW · ${dateLabel}`;
+  })();
 
   const cards: CardDefinition[] = [
     ...(hasFusionSolar
@@ -67,7 +77,7 @@ export default function Cards({
     ...(hasFusionSolar && derived.selfSufficiency > 0
       ? [{ label: "Samodostatnost", value: derived.selfSufficiency.toFixed(0) + "%", subtitle: "solar pokriva", colorClass: "accent-green" }]
       : []),
-    { label: "Vršna snaga", value: peakGenerationKw.toFixed(2), subtitle: `kW ${peakGenerationDay?.slice(5) || ""}`, colorClass: "" },
+    { label: "Vršna snaga", value: peakGenerationKw.toFixed(2), subtitle: peakSubtitle, colorClass: "" },
     ...(hasConsumption && bill
       ? [{ label: "Račun", value: bill.total.toFixed(2), subtitle: "€ s PDV", colorClass: "accent-purple" }]
       : []),

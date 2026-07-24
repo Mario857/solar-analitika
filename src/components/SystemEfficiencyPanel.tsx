@@ -25,6 +25,12 @@ const HEALTH_CONFIG: Record<SystemEfficiency["healthStatus"], { label: string; c
 export default function SystemEfficiencyPanel({ efficiency, installedKwp }: SystemEfficiencyPanelProps) {
   const health = HEALTH_CONFIG[efficiency.healthStatus];
 
+  /* PR and "stvarna prod." only cover days that have irradiance data. Saying so
+     stops the partial figures reading as whole-month totals. */
+  const coverageNote = efficiency.isPartialCoverage
+    ? ` PR i stvarna/teoretska proizvodnja računaju se samo za ${efficiency.coveredDays} od ${efficiency.productionDays} dana s proizvodnjom — za ostale dane nema podataka o iradijanciji. Specifični prinos prikazan je za cijeli mjesec.`
+    : "";
+
   const dayLabels = efficiency.dailyEfficiency.map((d) => d.date.slice(8));
 
   /* Daily Performance Ratio line chart */
@@ -138,8 +144,8 @@ export default function SystemEfficiencyPanel({ efficiency, installedKwp }: Syst
           <div className={`${cardValue} text-blue`}>{efficiency.theoreticalProductionKwh.toFixed(1)} kWh</div>
         </div>
         <div className={cardBox}>
-          <div className={cardLabel}>Spec. prinos</div>
-          <div className={`${cardValue} text-cyan`}>{efficiency.specificYieldKwhPerKwp.toFixed(1)} kWh/kWp</div>
+          <div className={cardLabel}>Spec. prinos (mjesec)</div>
+          <div className={`${cardValue} text-cyan`}>{efficiency.monthlySpecificYieldKwhPerKwp.toFixed(1)} kWh/kWp</div>
         </div>
         <div className={cardBox}>
           <div className={cardLabel}>Prosj. sunčani sati</div>
@@ -154,11 +160,14 @@ export default function SystemEfficiencyPanel({ efficiency, installedKwp }: Syst
           <div className={`${cardValue} text-text`}>{installedKwp} kWp</div>
         </div>
         <div className={cardBox}>
-          <div className={cardLabel}>Analiziranih dana</div>
-          <div className={`${cardValue} text-text`}>{efficiency.dailyEfficiency.length}</div>
+          <div className={cardLabel}>Dana s podacima o suncu</div>
+          <div className={`${cardValue} text-text`}>
+            {efficiency.coveredDays}
+            <span className="text-text-dim">/{efficiency.productionDays}</span>
+          </div>
         </div>
         <div className={cardBox}>
-          <div className={cardLabel}>Gubici</div>
+          <div className={cardLabel}>Gubici (ti dani)</div>
           <div className={`${cardValue} text-red`}>
             {(efficiency.theoreticalProductionKwh - efficiency.actualProductionKwh).toFixed(1)} kWh
           </div>
@@ -184,6 +193,7 @@ export default function SystemEfficiencyPanel({ efficiency, installedKwp }: Syst
       <p className="font-mono text-[0.55rem] text-text-dim mt-4">
         Performance Ratio (PR) uspoređuje stvarnu proizvodnju s teoretskim maksimumom na temelju instalirane snage ({installedKwp} kWp) i solarne iradijancije (GHI) s Open-Meteo.
         Tipičan zdrav sustav: 75–85%. Gubici uključuju temperaturu, sjenu, prljavštinu, kablove i inverter.
+        {coverageNote}
       </p>
     </div>
   );

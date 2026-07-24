@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { validateProxyTarget } from "@/lib/proxyGuard";
 
 export async function POST(request: NextRequest) {
   try {
@@ -9,7 +10,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Missing 'url'" }, { status: 400 });
     }
 
-    const resp = await fetch(url, {
+    const target = validateProxyTarget(url);
+    if (!target.url) {
+      return NextResponse.json({ error: target.error }, { status: 400 });
+    }
+
+    const resp = await fetch(target.url, {
       method: "GET",
       headers: {
         Cookie: cookie || "",

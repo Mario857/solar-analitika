@@ -46,20 +46,60 @@ export function loadConfig(): Config {
   }
 }
 
+/**
+ * Config as an external store so components can read it with useSyncExternalStore
+ * instead of setting state inside an effect. The snapshot must be referentially
+ * stable between changes — returning a fresh object every call would spin React
+ * in an endless re-render loop.
+ */
+const CONFIG_CHANGE_EVENT = "solar-config-change";
+const SERVER_SNAPSHOT: Config = { ...DEFAULTS };
+let configSnapshot: Config | null = null;
+
+export function getConfigSnapshot(): Config {
+  if (typeof window === "undefined") return SERVER_SNAPSHOT;
+  if (configSnapshot === null) configSnapshot = loadConfig();
+  return configSnapshot;
+}
+
+export function getServerConfigSnapshot(): Config {
+  return SERVER_SNAPSHOT;
+}
+
+export function subscribeToConfig(onChange: () => void): () => void {
+  window.addEventListener(CONFIG_CHANGE_EVENT, onChange);
+  /* Another tab writing to localStorage should update this one too */
+  window.addEventListener("storage", onChange);
+  return () => {
+    window.removeEventListener(CONFIG_CHANGE_EVENT, onChange);
+    window.removeEventListener("storage", onChange);
+  };
+}
+
+function publishConfig(config: Config): void {
+  configSnapshot = config;
+  window.dispatchEvent(new Event(CONFIG_CHANGE_EVENT));
+}
+
 /** Credential keys that must never be persisted */
 const SENSITIVE_KEYS = ["hepUsername", "hepPassword", "fusionSolarUsername", "fusionSolarPassword"];
 
 export function saveConfig(config: Config): void {
-  const safeConfig = { ...config };
+  const safeConfig: Config = { ...config };
+  /* Credential keys are not part of Config, but older builds may have merged
+     them in — strip them from the serialized copy before they reach storage. */
+  const serializable: Record<string, unknown> = { ...safeConfig };
   for (const key of SENSITIVE_KEYS) {
-    delete (safeConfig as Record<string, unknown>)[key];
+    delete serializable[key];
   }
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(safeConfig));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(serializable));
+  publishConfig(safeConfig);
 }
 
 export function resetConfig(): Config {
   const config = { ...DEFAULTS };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+  publishConfig(config);
   return config;
 }
 

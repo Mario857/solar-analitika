@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import {
   Config,
   SessionCredentials,
@@ -10,9 +10,13 @@ import {
   FusionSolarDay,
   HourlySample,
   HEPMeterRecord,
+  DegradationAnalysis,
+  MeasuredMonthSavings,
+  WeatherDayRadiation,
 } from "@/lib/types";
 import {
-  loadConfig, saveConfig, resetConfig, resolveTariff,
+  saveConfig, resetConfig, resolveTariff,
+  subscribeToConfig, getConfigSnapshot, getServerConfigSnapshot,
   loadCachedTokens, saveCachedHepToken, saveCachedFsCookie,
   HEP_API_BASE, FUSION_SOLAR_API,
 } from "@/lib/config";
@@ -31,6 +35,7 @@ import {
   calculateForecast,
   aggregateHourlyRadiationToDaily,
   calculateGhiScaleFactors,
+  computeMonthSummary,
   toMonthPrefix,
 } from "@/lib/calculations";
 import { getCachedMonth, setCachedMonth, getAllCachedMonthKeys } from "@/lib/cache";
@@ -69,6 +74,33 @@ const STATUS_COLOR_MAP: Record<string, string> = {
   cached: "text-cyan",
 };
 
+/** Everything the dashboard renders for one month — always replaced as a unit */
+interface MonthDataset {
+  dailyData: Record<string, DailyEnergyData>;
+  fusionSolarDaily: Record<string, FusionSolarDay>;
+  hourlyData: Record<string, Record<number, HourlySample>>;
+  sortedDays: string[];
+  hasConsumption: boolean;
+  hasFusionSolar: boolean;
+}
+
+const EMPTY_DATASET: MonthDataset = {
+  dailyData: {},
+  fusionSolarDaily: {},
+  hourlyData: {},
+  sortedDays: [],
+  hasConsumption: false,
+  hasFusionSolar: false,
+};
+
+/** Local "YYYY-MM-DD" — toISOString would shift the date across the UTC boundary */
+function toLocalDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function buildInitialMonthList(): MonthSelection[] {
   const now = new Date();
   const months: MonthSelection[] = [];
@@ -80,7 +112,10 @@ function buildInitialMonthList(): MonthSelection[] {
 }
 
 export default function Home() {
-  const [config, setConfig] = useState<Config>(() => loadConfig());
+  /* Config lives in an external store: the server snapshot is DEFAULTS and the
+     client snapshot comes from localStorage, so hydration stays consistent
+     without setting state inside an effect. */
+  const config = useSyncExternalStore(subscribeToConfig, getConfigSnapshot, getServerConfigSnapshot);
   const [credentials, setCredentials] = useState<SessionCredentials>({
     hepUsername: "",
     hepPassword: "",
@@ -96,15 +131,14 @@ export default function Home() {
 
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState({ text: "Unesite tokene u Postavkama", cls: "" });
-  const [hasData, setHasData] = useState(false);
-  const [hasConsumption, setHasConsumption] = useState(false);
-  const [hasFusionSolar, setHasFusionSolar] = useState(false);
   const [isCached, setIsCached] = useState(false);
 
-  const dailyDataRef = useRef<Record<string, DailyEnergyData>>({});
-  const fusionSolarRef = useRef<Record<string, FusionSolarDay>>({});
-  const hourlyDataRef = useRef<Record<string, Record<number, HourlySample>>>({});
-  const [sortedDays, setSortedDays] = useState<string[]>([]);
+  /* One state object rather than refs: the data and the day index that indexes it
+     must swap together. Mutating a ref and reading it during render lets React
+     paint one month's totals against another month's day list. */
+  const [dataset, setDataset] = useState<MonthDataset>(EMPTY_DATASET);
+  const { dailyData, fusionSolarDaily, hourlyData, sortedDays, hasConsumption, hasFusionSolar } = dataset;
+  const hasData = sortedDays.length > 0;
 
   /* Store active tokens so yearly batch loading can reuse them */
   const activeHepTokenRef = useRef<string>("");
@@ -116,22 +150,21 @@ export default function Home() {
   /* Weather-based GHI scale factors for production forecast */
   const [weatherScaleFactors, setWeatherScaleFactors] = useState<Record<string, number>>({});
   /* Raw daily radiation data for system efficiency calculation */
-  const [weatherRadiation, setWeatherRadiation] = useState<import("@/lib/types").WeatherDayRadiation[]>([]);
+  const [weatherRadiation, setWeatherRadiation] = useState<WeatherDayRadiation[]>([]);
   /* Degradation analysis from all cached months */
-  const [degradationAnalysis, setDegradationAnalysis] = useState<import("@/lib/types").DegradationAnalysis | null>(null);
-
-  useEffect(() => {
-    setConfig(loadConfig());
-  }, []);
+  const [degradationAnalysis, setDegradationAnalysis] = useState<DegradationAnalysis | null>(null);
+  /* Real per-month savings across every cached month — the ROI baseline */
+  const [measuredMonthSavings, setMeasuredMonthSavings] = useState<MeasuredMonthSavings[]>([]);
 
   function applyCachedData(cached: CachedMonthData) {
-    dailyDataRef.current = cached.dailyData;
-    fusionSolarRef.current = cached.fusionSolarDaily;
-    hourlyDataRef.current = cached.hourlyData;
-    setSortedDays(cached.sortedDays);
-    setHasConsumption(cached.hasConsumption);
-    setHasFusionSolar(cached.hasFusionSolar);
-    setHasData(true);
+    setDataset({
+      dailyData: cached.dailyData,
+      fusionSolarDaily: cached.fusionSolarDaily,
+      hourlyData: cached.hourlyData,
+      sortedDays: cached.sortedDays,
+      hasConsumption: cached.hasConsumption,
+      hasFusionSolar: cached.hasFusionSolar,
+    });
     setIsCached(true);
   }
 
@@ -147,13 +180,7 @@ export default function Home() {
         setStatus({ text: `Predmemorija (${cached.cachedAt.slice(0, 10)})`, cls: "cached" });
       } else {
         /* No cache for this month — clear stale data from previous month */
-        dailyDataRef.current = {};
-        fusionSolarRef.current = {};
-        hourlyDataRef.current = {};
-        setSortedDays([]);
-        setHasData(false);
-        setHasConsumption(false);
-        setHasFusionSolar(false);
+        setDataset(EMPTY_DATASET);
         setIsCached(false);
         setStatus({ text: "Nema podataka — kliknite Analiziraj", cls: "" });
       }
@@ -168,22 +195,19 @@ export default function Home() {
     let cancelled = false;
 
     async function fetchWeather() {
-      /* Open-Meteo supports ~92 past days and ~16 forecast days.
-         Clamp the date range to the API's available window. */
+      /* Past months come from the archive endpoint, so only the future needs
+         clamping — Open-Meteo forecasts about 16 days ahead. */
       const today = new Date();
       const monthStart = new Date(selectedMonth.year, selectedMonth.month - 1, 1);
       const monthEnd = new Date(selectedMonth.year, selectedMonth.month, 0);
-      const maxPast = new Date(today);
-      maxPast.setDate(maxPast.getDate() - 92);
       const maxFuture = new Date(today);
       maxFuture.setDate(maxFuture.getDate() + 16);
 
-      const clampedStart = monthStart < maxPast ? maxPast : monthStart;
       const clampedEnd = monthEnd > maxFuture ? maxFuture : monthEnd;
-      if (clampedStart >= clampedEnd) return;
+      if (monthStart > clampedEnd) return;
 
-      const startDate = clampedStart.toISOString().slice(0, 10);
-      const endDate = clampedEnd.toISOString().slice(0, 10);
+      const startDate = toLocalDateKey(monthStart);
+      const endDate = toLocalDateKey(clampedEnd);
 
       try {
         const response = await fetch(
@@ -195,8 +219,9 @@ export default function Home() {
 
         const dailyRadiation = aggregateHourlyRadiationToDaily(data);
 
-        /* Split into historical (analyzed days) and forecast (remaining days) */
-        const todayStr = new Date().toISOString().slice(0, 10);
+        /* Split into historical (analyzed days) and forecast (remaining days).
+           Local date key, not UTC — near midnight toISOString names another day. */
+        const todayStr = toLocalDateKey(today);
         const historicalDays = dailyRadiation.filter((d) => d.date < todayStr);
         const forecastDays = dailyRadiation.filter((d) => d.date >= todayStr);
 
@@ -214,14 +239,16 @@ export default function Home() {
     return () => { cancelled = true; };
   }, [hasData, selectedMonth, config.latitude, config.longitude]);
 
-  /* Compute degradation analysis from all cached months */
+  /* Derive whole-history analyses from every cached month: panel degradation, and
+     the measured monthly savings that anchor the ROI projection. Extrapolating ROI
+     from whichever single month happens to be open swings the annual figure by 2x+. */
   useEffect(() => {
     if (!hasData) return;
     let cancelled = false;
 
-    async function loadDegradation() {
+    async function loadHistory() {
       const allKeys = await getAllCachedMonthKeys();
-      if (cancelled || allKeys.length < 2) return;
+      if (cancelled || allKeys.length === 0) return;
 
       const allCached: CachedMonthData[] = [];
       for (const key of allKeys) {
@@ -229,25 +256,30 @@ export default function Home() {
         if (cancelled) return;
         if (cached) allCached.push(cached);
       }
+      if (cancelled) return;
 
-      if (!cancelled) {
-        const analysis = calculateDegradation(allCached, config.installedKwp);
-        setDegradationAnalysis(analysis);
-      }
+      setDegradationAnalysis(calculateDegradation(allCached, config.installedKwp));
+
+      const savings: MeasuredMonthSavings[] = allCached
+        .filter((cached) => cached.hasConsumption)
+        .map((cached) => ({
+          monthKey: cached.monthKey,
+          savingsEur: computeMonthSummary(cached, config).savingsEur,
+        }));
+      setMeasuredMonthSavings(savings);
     }
 
-    loadDegradation();
+    loadHistory();
     return () => { cancelled = true; };
-  }, [hasData, cacheRevision, config.installedKwp]);
+  }, [hasData, cacheRevision, config]);
 
+  /* saveConfig/resetConfig publish to the config store, which re-renders subscribers */
   const handleSaveConfig = useCallback((newConfig: Config) => {
-    setConfig(newConfig);
     saveConfig(newConfig);
   }, []);
 
   const handleResetConfig = useCallback(() => {
-    const newConfig = resetConfig();
-    setConfig(newConfig);
+    resetConfig();
   }, []);
 
   const handleShiftMonth = useCallback((direction: -1 | 1) => {
@@ -378,9 +410,7 @@ export default function Home() {
       if (loginResult.success && loginResult.token) {
         saveCachedHepToken(loginResult.token);
         /* Persist token in config so it's visible in Settings */
-        const updatedConfig = { ...config, token: loginResult.token };
-        setConfig(updatedConfig);
-        saveConfig(updatedConfig);
+        saveConfig({ ...config, token: loginResult.token });
         return loginResult.token;
       }
       setStatus({ text: `HEP prijava: ${loginResult.error || "neuspjeh"}`, cls: "err" });
@@ -410,9 +440,7 @@ export default function Home() {
       if (loginResult.success && loginResult.cookie) {
         saveCachedFsCookie(loginResult.cookie);
         /* Persist cookie in config so it's visible in Settings */
-        const updatedConfig = { ...config, fusionSolarCookie: loginResult.cookie };
-        setConfig(updatedConfig);
-        saveConfig(updatedConfig);
+        saveConfig({ ...config, fusionSolarCookie: loginResult.cookie });
         return loginResult.cookie;
       }
     } catch {
@@ -487,7 +515,6 @@ export default function Home() {
 
   async function handleAnalyze() {
     setIsLoading(true);
-    setHasData(false);
     setIsCached(false);
 
     const tokens = await resolveTokens();
@@ -586,7 +613,7 @@ export default function Home() {
   }
 
   const derived = hasData
-    ? calculateDerivedMetrics(sortedDays, dailyDataRef.current, fusionSolarRef.current, hasFusionSolar)
+    ? calculateDerivedMetrics(sortedDays, dailyData, fusionSolarDaily, hasFusionSolar)
     : null;
   /* Resolve tariff prices for the selected month */
   const monthKey = toMonthPrefix(selectedMonth);
@@ -594,16 +621,16 @@ export default function Home() {
   /* Without production data self-consumption is unknown — bill estimates fall back to feed-in */
   const selfConsumedForBill = hasFusionSolar && derived ? derived.totalSelfConsumed : null;
   const bill = hasData && hasConsumption
-    ? calculateBill(sortedDays, dailyDataRef.current, activeTariff)
+    ? calculateBill(sortedDays, dailyData, activeTariff)
     : null;
   const billWithoutSolar = hasData && hasConsumption
-    ? calculateBillWithoutSolar(sortedDays, dailyDataRef.current, activeTariff, selfConsumedForBill)
+    ? calculateBillWithoutSolar(sortedDays, dailyData, activeTariff, selfConsumedForBill)
     : null;
   const loadShiftAnalysis = hasData && hasConsumption
-    ? analyzeLoadShifting(sortedDays, hourlyDataRef.current)
+    ? analyzeLoadShifting(sortedDays, hourlyData)
     : null;
   const tariffComparison = hasData && hasConsumption
-    ? compareTariffModels(sortedDays, dailyDataRef.current, activeTariff, selfConsumedForBill)
+    ? compareTariffModels(sortedDays, dailyData, activeTariff, selfConsumedForBill)
     : null;
 
   const systemEfficiency = hasData && derived && hasFusionSolar
@@ -611,13 +638,13 @@ export default function Home() {
     : null;
 
   const forecast = hasData && derived
-    ? calculateForecast(selectedMonth, derived, bill, billWithoutSolar, hasFusionSolar, weatherScaleFactors)
+    ? calculateForecast(selectedMonth, derived, dailyData, activeTariff, hasConsumption, hasFusionSolar, weatherScaleFactors)
     : null;
 
   /* Savings against the real monthly cost: invoice minus surplus payout (otkup) */
   const measuredSavings = bill && billWithoutSolar !== null ? billWithoutSolar - bill.effectiveCostEur : 0;
   const roiAnalysis = hasData && hasConsumption && measuredSavings > 0 && config.systemCostEur > 0
-    ? calculateRoi(measuredSavings, selectedMonth, config.systemCostEur, config.installationDate)
+    ? calculateRoi(measuredSavings, selectedMonth, config.systemCostEur, config.installationDate, measuredMonthSavings)
     : null;
 
   const statusColorClass = STATUS_COLOR_MAP[status.cls] || "text-text-dim";
@@ -628,12 +655,16 @@ export default function Home() {
 
   const analyzeButtonLabel = isCached ? "OSVJEŽI" : "ANALIZIRAJ";
 
+  const forecastPanel = forecast
+    ? <ProductionForecast forecast={forecast} hasFusionSolar={hasFusionSolar} />
+    : null;
+
   const dashboardContent = hasData && derived ? (
     <div>
       <div id="share-cards">
         <Cards
           sortedDays={sortedDays}
-          dailyData={dailyDataRef.current}
+          dailyData={dailyData}
           derived={derived}
           bill={bill}
           billWithoutSolar={billWithoutSolar}
@@ -641,24 +672,31 @@ export default function Home() {
           hasConsumption={hasConsumption}
         />
       </div>
-      {forecast && <ProductionForecast forecast={forecast} hasFusionSolar={hasFusionSolar} />}
+      {forecastPanel}
       <div id="share-chart" className={sectionBox}>
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-mono text-xs font-semibold uppercase tracking-widest text-text-dim">Dnevni pregled — svi izvori</h3>
           <ShareButton targetId="share-chart" fileName="solar-dnevni-pregled" />
         </div>
-        <MainChart sortedDays={sortedDays} dailyData={dailyDataRef.current} derived={derived} hasFusionSolar={hasFusionSolar} hasConsumption={hasConsumption} />
+        <MainChart sortedDays={sortedDays} dailyData={dailyData} derived={derived} hasFusionSolar={hasFusionSolar} hasConsumption={hasConsumption} />
       </div>
-      <Insights sortedDays={sortedDays} dailyData={dailyDataRef.current} derived={derived} hasFusionSolar={hasFusionSolar} hasConsumption={hasConsumption} bill={bill} billWithoutSolar={billWithoutSolar} />
+      <Insights sortedDays={sortedDays} dailyData={dailyData} derived={derived} hasFusionSolar={hasFusionSolar} hasConsumption={hasConsumption} bill={bill} billWithoutSolar={billWithoutSolar} />
     </div>
   ) : null;
+
+  const systemEfficiencyPanel = systemEfficiency
+    ? <SystemEfficiencyPanel efficiency={systemEfficiency} installedKwp={config.installedKwp} />
+    : null;
+  const degradationPanel = degradationAnalysis
+    ? <DegradationPanel analysis={degradationAnalysis} installedKwp={config.installedKwp} />
+    : null;
 
   const energyContent = hasData && derived ? (
     <>
       <EnergyFlow derived={derived} hasFusionSolar={hasFusionSolar} />
       <EnergyCharts sortedDays={sortedDays} derived={derived} hasFusionSolar={hasFusionSolar} hasConsumption={hasConsumption} />
-      {systemEfficiency && <SystemEfficiencyPanel efficiency={systemEfficiency} installedKwp={config.installedKwp} />}
-      {degradationAnalysis && <DegradationPanel analysis={degradationAnalysis} installedKwp={config.installedKwp} />}
+      {systemEfficiencyPanel}
+      {degradationPanel}
     </>
   ) : (
     <div className={sectionBox}>
@@ -668,7 +706,7 @@ export default function Home() {
   );
 
   const hourlyContent = hasData && derived ? (
-    <HourlyProfile sortedDays={sortedDays} hourlyData={hourlyDataRef.current} derived={derived} hasFusionSolar={hasFusionSolar} hasConsumption={hasConsumption} />
+    <HourlyProfile sortedDays={sortedDays} hourlyData={hourlyData} derived={derived} hasFusionSolar={hasFusionSolar} hasConsumption={hasConsumption} />
   ) : (
     <div className={sectionBox}>
       <h3 className={sectionHeading}>Satni profil</h3>
@@ -676,28 +714,75 @@ export default function Home() {
     </div>
   );
 
-  const billContent = hasData && hasConsumption && bill ? (
+  const tariffComparisonPanel = tariffComparison
+    ? <TariffComparisonPanel comparison={tariffComparison} activeTariffModel={activeTariff.tariffModel} />
+    : null;
+  const billEmptyMessage = hasData ? "Potrebni podaci preuzete energije." : "Pokrenite analizu.";
+
+  const billContent = hasData && hasConsumption && bill && billWithoutSolar !== null ? (
     <>
       <div id="share-bill">
-        <BillPanel sortedDays={sortedDays} dailyData={dailyDataRef.current} bill={bill} billWithoutSolar={billWithoutSolar!} tariff={activeTariff} />
+        <BillPanel bill={bill} billWithoutSolar={billWithoutSolar} tariff={activeTariff} />
       </div>
-      {tariffComparison && (
-        <TariffComparisonPanel comparison={tariffComparison} activeTariffModel={activeTariff.tariffModel} />
-      )}
+      {tariffComparisonPanel}
     </>
   ) : (
     <div className={sectionBox}>
       <h3 className={sectionHeading}>Procjena računa</h3>
-      <p className={noteText}>{hasData ? "Potrebni podaci preuzete energije." : "Pokrenite analizu."}</p>
+      <p className={noteText}>{billEmptyMessage}</p>
     </div>
   );
 
   const tableContent = hasData && derived ? (
-    <DataTable dailyData={dailyDataRef.current} derived={derived} hasFusionSolar={hasFusionSolar} hasConsumption={hasConsumption} />
+    <DataTable dailyData={dailyData} derived={derived} hasFusionSolar={hasFusionSolar} hasConsumption={hasConsumption} />
   ) : (
     <div className={sectionBox}>
       <h3 className={sectionHeading}>Tablica</h3>
       <p className={noteText}>Pokrenite analizu.</p>
+    </div>
+  );
+
+  const optimizeContent = hasData && loadShiftAnalysis ? (
+    <LoadShiftInsights analysis={loadShiftAnalysis} hasFusionSolar={hasFusionSolar} />
+  ) : (
+    <div className={sectionBox}>
+      <h3 className={sectionHeading}>Optimizacija potrošnje</h3>
+      <p className={noteText}>{billEmptyMessage}</p>
+    </div>
+  );
+
+  const batteryContent = hasData && hasConsumption && derived ? (
+    <BatterySimulator
+      sortedDays={sortedDays}
+      hourlyData={hourlyData}
+      derived={derived}
+      tariff={activeTariff}
+      selectedMonth={selectedMonth}
+    />
+  ) : (
+    <div className={sectionBox}>
+      <h3 className={sectionHeading}>Simulacija baterije</h3>
+      <p className={noteText}>{billEmptyMessage}</p>
+    </div>
+  );
+
+  const roiEmptyMessage = (() => {
+    if (!hasData) return "Pokrenite analizu.";
+    if (config.systemCostEur <= 0) return "Unesite cijenu sustava u Postavkama.";
+    return "Potrebni podaci preuzete energije i ušteda > 0 €.";
+  })();
+
+  const roiContent = roiAnalysis ? (
+    <RoiCalculator
+      analysis={roiAnalysis}
+      systemCostEur={config.systemCostEur}
+      selectedMonth={selectedMonth}
+      hasInstallationDate={!!config.installationDate}
+    />
+  ) : (
+    <div className={sectionBox}>
+      <h3 className={sectionHeading}>ROI — Povrat investicije</h3>
+      <p className={noteText}>{roiEmptyMessage}</p>
     </div>
   );
 
@@ -735,56 +820,12 @@ export default function Home() {
 
       <div className={activeTab === "energy" ? "block" : "hidden"}>{energyContent}</div>
       <div className={activeTab === "hourly" ? "block" : "hidden"}>{hourlyContent}</div>
-      <div className={activeTab === "optimize" ? "block" : "hidden"}>
-        {hasData && loadShiftAnalysis ? (
-          <LoadShiftInsights analysis={loadShiftAnalysis} hasFusionSolar={hasFusionSolar} />
-        ) : (
-          <div className={sectionBox}>
-            <h3 className={sectionHeading}>Optimizacija potrošnje</h3>
-            <p className={noteText}>{hasData ? "Potrebni podaci preuzete energije." : "Pokrenite analizu."}</p>
-          </div>
-        )}
-      </div>
-      <div className={activeTab === "battery" ? "block" : "hidden"}>
-        {hasData && hasConsumption && derived ? (
-          <BatterySimulator
-            sortedDays={sortedDays}
-            hourlyData={hourlyDataRef.current}
-            derived={derived}
-            tariff={activeTariff}
-            selectedMonth={selectedMonth}
-          />
-        ) : (
-          <div className={sectionBox}>
-            <h3 className={sectionHeading}>Simulacija baterije</h3>
-            <p className={noteText}>{hasData ? "Potrebni podaci preuzete energije." : "Pokrenite analizu."}</p>
-          </div>
-        )}
-      </div>
+      <div className={activeTab === "optimize" ? "block" : "hidden"}>{optimizeContent}</div>
+      <div className={activeTab === "battery" ? "block" : "hidden"}>{batteryContent}</div>
       <div className={activeTab === "compare" ? "block" : "hidden"}>
         <MonthComparison config={config} cacheRevision={cacheRevision} />
       </div>
-      <div className={activeTab === "roi" ? "block" : "hidden"}>
-        {roiAnalysis ? (
-          <RoiCalculator
-            analysis={roiAnalysis}
-            systemCostEur={config.systemCostEur}
-            selectedMonth={selectedMonth}
-            hasInstallationDate={!!config.installationDate}
-          />
-        ) : (
-          <div className={sectionBox}>
-            <h3 className={sectionHeading}>ROI — Povrat investicije</h3>
-            <p className={noteText}>
-              {!hasData
-                ? "Pokrenite analizu."
-                : config.systemCostEur <= 0
-                  ? "Unesite cijenu sustava u Postavkama."
-                  : "Potrebni podaci preuzete energije i ušteda > 0 €."}
-            </p>
-          </div>
-        )}
-      </div>
+      <div className={activeTab === "roi" ? "block" : "hidden"}>{roiContent}</div>
       <div className={activeTab === "bill" ? "block" : "hidden"}>{billContent}</div>
       <div className={activeTab === "table" ? "block" : "hidden"}>{tableContent}</div>
       <div className={activeTab === "ai" ? "block" : "hidden"}>

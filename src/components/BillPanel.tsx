@@ -1,11 +1,9 @@
 "use client";
 
-import { TariffPrices, DailyEnergyData, BillBreakdown } from "@/lib/types";
+import { TariffPrices, BillBreakdown } from "@/lib/types";
 import ShareButton from "@/components/ShareButton";
 
 interface BillPanelProps {
-  sortedDays: string[];
-  dailyData: Record<string, DailyEnergyData>;
   bill: BillBreakdown;
   billWithoutSolar: number;
   tariff: TariffPrices;
@@ -16,7 +14,7 @@ const SAVINGS_DISPLAY_THRESHOLD = 1;
 const billRow = "flex justify-between py-1.5 font-mono text-xs sm:text-sm";
 const billTotalRow = "flex justify-between py-1.5 font-mono text-xs sm:text-sm border-t border-border-accent mt-1.5 pt-2 font-bold";
 
-export default function BillPanel({ sortedDays, dailyData, bill, billWithoutSolar, tariff }: BillPanelProps) {
+export default function BillPanel({ bill, billWithoutSolar, tariff }: BillPanelProps) {
   const isSingleTariff = tariff.tariffModel === "single";
   // Savings compare against effective cost (invoice minus otkup payout), not just the invoice
   const savings = billWithoutSolar - bill.effectiveCostEur;
@@ -44,18 +42,10 @@ export default function BillPanel({ sortedDays, dailyData, bill, billWithoutSola
       </>
     );
   } else {
-    let consumedHighTariff = 0;
-    let consumedLowTariff = 0;
-    let feedInHighTariff = 0;
-    let feedInLowTariff = 0;
-    for (const dateKey of sortedDays) {
-      consumedHighTariff += dailyData[dateKey].consumedHighTariffKwh;
-      consumedLowTariff += dailyData[dateKey].consumedLowTariffKwh;
-      feedInHighTariff += dailyData[dateKey].feedInHighTariffKwh;
-      feedInLowTariff += dailyData[dateKey].feedInLowTariffKwh;
-    }
-    const netHighTariff = Math.max(consumedHighTariff - feedInHighTariff, 0);
-    const netLowTariff = Math.max(consumedLowTariff - feedInLowTariff, 0);
+    /* Taken from the bill rather than recomputed, so the panel can never show a
+       different net than the one the total was actually charged on */
+    const netHighTariff = bill.netHighTariffKwh;
+    const netLowTariff = bill.netLowTariffKwh;
 
     energyCostBreakdown = (
       <>
@@ -90,6 +80,11 @@ export default function BillPanel({ sortedDays, dailyData, bill, billWithoutSola
       </>
     );
   }
+
+  /* Dual tariff nets VT and NT separately, so the total net is NOT preuzeto − predano */
+  const netSummaryText = isSingleTariff
+    ? `Preuz. ${bill.totalConsumedKwh.toFixed(0)} − Pred. ${bill.totalFeedInKwh.toFixed(0)} =`
+    : `Neto VT ${bill.netHighTariffKwh.toFixed(0)} + NT ${bill.netLowTariffKwh.toFixed(0)} =`;
 
   const solidarityLabel = bill.solidarityCost > 0 ? "Solidarna" : "Solidarna (popust)";
   const totalSupplyCost = bill.energyCost + bill.solidarityCost + bill.renewableEnergyCost + tariff.supplyFee;
@@ -129,8 +124,7 @@ export default function BillPanel({ sortedDays, dailyData, bill, billWithoutSola
         className="flex justify-between py-2 font-mono text-xs sm:text-sm mb-3 border border-border-accent p-2 rounded-sm bg-surface-2"
       >
         <span className="text-text-dim">
-          Preuz. {bill.totalConsumedKwh.toFixed(0)} − Pred. {bill.totalFeedInKwh.toFixed(0)} ={" "}
-          <b>{bill.netBilledKwh.toFixed(0)} kWh</b>
+          {netSummaryText} <b>{bill.netBilledKwh.toFixed(0)} kWh</b>
         </span>
         <span className="text-green font-medium">neto</span>
       </div>

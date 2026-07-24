@@ -67,7 +67,9 @@ export default function DegradationPanel({ analysis, installedKwp }: Degradation
     },
   };
 
-  /* Trend line chart — production over time with linear trend overlay */
+  /* Production over time. No model-based trend line is drawn: the estimate comes
+     from same-month year-over-year pairs, so overlaying a seasonally de-normalized
+     regression would imply a precision the method deliberately does not claim. */
   const productionChartData = {
     labels,
     datasets: [
@@ -82,32 +84,24 @@ export default function DegradationPanel({ analysis, installedKwp }: Degradation
         pointRadius: 3,
         pointBackgroundColor: "#22d3ee",
       },
-      {
-        label: "Trend linija",
-        data: analysis.monthlyPoints.map((_, index) => {
-          /* Compute month index from first month */
-          const point = analysis.monthlyPoints[index];
-          const year = parseInt(point.monthKey.slice(0, 4));
-          const monthNum = parseInt(point.monthKey.slice(5, 7));
-          const firstYear = parseInt(analysis.firstMonth.slice(0, 4));
-          const firstMonthNum = parseInt(analysis.firstMonth.slice(5, 7));
-          const monthIndex = (year - firstYear) * 12 + (monthNum - firstMonthNum);
+    ],
+  };
 
-          /* De-normalize: multiply by seasonal factor to get actual expected yield */
-          const SEASONAL_INDEX: Record<number, number> = {
-            1: 0.40, 2: 0.55, 3: 0.80, 4: 1.05,
-            5: 1.30, 6: 1.45, 7: 1.50, 8: 1.35,
-            9: 1.05, 10: 0.70, 11: 0.45, 12: 0.35,
-          };
-          const seasonalFactor = SEASONAL_INDEX[monthNum] || 1.0;
-          const normalizedTrendYield = analysis.trendSlopePerMonth * monthIndex + analysis.trendIntercept;
-          return normalizedTrendYield * seasonalFactor * installedKwp;
-        }),
-        borderColor: "#e0525280",
-        borderWidth: 2,
-        borderDash: [6, 3],
-        pointRadius: 0,
-        fill: false,
+  /* Year-over-year comparison chart — the actual basis for the estimate */
+  const comparisonChartData = {
+    labels: analysis.comparisons.map((c) => `${MONTH_NAMES[c.month]} '${c.earlierMonthKey.slice(2, 4)}→'${c.laterMonthKey.slice(2, 4)}`),
+    datasets: [
+      {
+        label: "Prije (kWh/kWp)",
+        data: analysis.comparisons.map((c) => +c.earlierYieldKwhPerKwp.toFixed(1)),
+        backgroundColor: "#7a8a9e",
+        borderRadius: 2,
+      },
+      {
+        label: "Poslije (kWh/kWp)",
+        data: analysis.comparisons.map((c) => +c.laterYieldKwhPerKwp.toFixed(1)),
+        backgroundColor: "#f0a420",
+        borderRadius: 2,
       },
     ],
   };
@@ -136,9 +130,14 @@ export default function DegradationPanel({ analysis, installedKwp }: Degradation
     ? (1 - Math.pow(1 - analysis.annualDegradationRatePercent / 100, 25)) * 100
     : 0;
 
+  const comparisonCount = analysis.comparisons.length;
   const reliabilityNote = analysis.isReliable
-    ? `Analiza temeljena na ${analysis.monthlyPoints.length} mjeseci podataka (${analysis.firstMonth} — ${analysis.lastMonth}).`
-    : `Upozorenje: Samo ${analysis.monthlyPoints.length} mjeseci podataka — potrebno minimalno 6 za pouzdanu procjenu.`;
+    ? `Analiza temeljena na ${comparisonCount} usporedbi istih mjeseci kroz godine (${analysis.firstMonth} — ${analysis.lastMonth}).`
+    : `Upozorenje: samo ${comparisonCount} usporedb${comparisonCount === 1 ? "a" : "e"} istog mjeseca kroz godine — potrebno je barem 6 za pouzdanu procjenu.`;
+
+  const unreliableHint = analysis.isReliable
+    ? ""
+    : " Dohvatite više mjeseci u Godišnjem pregledu za pouzdaniju analizu.";
 
   return (
     <div id="share-degradation" className={sectionBox}>
@@ -154,6 +153,9 @@ export default function DegradationPanel({ analysis, installedKwp }: Degradation
             <span className="font-mono text-[0.6rem] text-text-dim uppercase tracking-wider">Godišnja degradacija</span>
             <div className={`font-mono text-xl font-bold mt-0.5 ${status.color}`}>
               {analysis.annualDegradationRatePercent.toFixed(2)}%/god
+              <span className="font-mono text-[0.6rem] font-normal text-text-dim ml-1.5">
+                ± {analysis.uncertaintyPercent.toFixed(2)}
+              </span>
             </div>
           </div>
           <div className="text-right">
@@ -218,8 +220,8 @@ export default function DegradationPanel({ analysis, installedKwp }: Degradation
           <div className={`${cardValue} text-text`}>{installedKwp} kWp</div>
         </div>
         <div className={cardBox}>
-          <div className={cardLabel}>Analiziranih mjeseci</div>
-          <div className={`${cardValue} text-text`}>{analysis.monthlyPoints.length}</div>
+          <div className={cardLabel}>Usporedbi god./god.</div>
+          <div className={`${cardValue} text-text`}>{comparisonCount}</div>
         </div>
         <div className={cardBox}>
           <div className={cardLabel}>Očekivana degradacija</div>
@@ -227,11 +229,19 @@ export default function DegradationPanel({ analysis, installedKwp }: Degradation
         </div>
       </div>
 
-      {/* Production trend chart */}
+      {/* Production over time */}
       <div className="mb-5">
-        <h4 className="font-mono text-[0.6rem] uppercase tracking-wider text-text-dim mb-3">Mjesečna proizvodnja s trend linijom</h4>
+        <h4 className="font-mono text-[0.6rem] uppercase tracking-wider text-text-dim mb-3">Mjesečna proizvodnja</h4>
         <div className="h-[220px] sm:h-[260px]">
           <Line data={productionChartData} options={trendChartOptions} />
+        </div>
+      </div>
+
+      {/* Year-over-year comparisons — the basis for the degradation estimate */}
+      <div className="mb-5">
+        <h4 className="font-mono text-[0.6rem] uppercase tracking-wider text-text-dim mb-3">Isti mjesec kroz godine</h4>
+        <div className="h-[220px] sm:h-[260px]">
+          <Bar data={comparisonChartData} options={yieldChartOptions} />
         </div>
       </div>
 
@@ -245,8 +255,10 @@ export default function DegradationPanel({ analysis, installedKwp }: Degradation
 
       <p className="font-mono text-[0.55rem] text-text-dim mt-4">
         {reliabilityNote} Kristalni silicijski paneli tipično degradiraju ~0.5%/god.
-        Specifični prinos normaliziran sezonskim indeksom za Hrvatsku.
-        {!analysis.isReliable && " Dohvatite više mjeseci u Godišnjem pregledu za pouzdaniju analizu."}
+        Procjena uspoređuje isti kalendarski mjesec u različitim godinama, pa se sezonske razlike
+        poništavaju same od sebe — bez pretpostavljenog sezonskog indeksa koji ne može odgovarati
+        konkretnom krovu. Oznaka ± prikazuje rasap pojedinačnih usporedbi.
+        {unreliableHint}
       </p>
     </div>
   );

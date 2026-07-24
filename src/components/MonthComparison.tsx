@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Bar, Line } from "react-chartjs-2";
-import { Config, MonthSummary, CachedMonthData, DerivedMonthlyData } from "@/lib/types";
+import { Config, MonthSummary, DerivedMonthlyData } from "@/lib/types";
 import { computeMonthSummary, calculateDerivedMetrics } from "@/lib/calculations";
 import { getAllCachedMonthKeys, getCachedMonth } from "@/lib/cache";
 import { MONTH_NAMES } from "@/lib/config";
@@ -48,8 +48,17 @@ interface ComparisonRow {
   delta: { text: string; color: string };
 }
 
-function buildComparisonRows(summaryA: MonthSummary, summaryB: MonthSummary): ComparisonRow[] {
+function buildComparisonRows(
+  summaryA: MonthSummary,
+  summaryB: MonthSummary,
+  isPerDay: boolean
+): ComparisonRow[] {
   const rows: ComparisonRow[] = [];
+
+  /* Months differ in length (and the current month is partial), so a raw kWh
+     delta partly just counts extra days. Per-day mode divides by analyzed days. */
+  const divisorA = isPerDay ? Math.max(summaryA.analyzedDays, 1) : 1;
+  const divisorB = isPerDay ? Math.max(summaryB.analyzedDays, 1) : 1;
 
   const addRow = (label: string, a: number, b: number, unit: string, decimals = 1, invertColor = false) => {
     rows.push({
@@ -60,17 +69,24 @@ function buildComparisonRows(summaryA: MonthSummary, summaryB: MonthSummary): Co
     });
   };
 
-  addRow("Solarna proizvodnja", summaryA.totalSolarProductionKwh, summaryB.totalSolarProductionKwh, "kWh");
-  addRow("Predaja u mrežu", summaryA.totalFeedInKwh, summaryB.totalFeedInKwh, "kWh");
-  addRow("Potrošnja iz mreže", summaryA.totalConsumedKwh, summaryB.totalConsumedKwh, "kWh", 1, true);
-  addRow("Samopotrošnja", summaryA.totalSelfConsumedKwh, summaryB.totalSelfConsumedKwh, "kWh");
-  addRow("Ukupna potrošnja", summaryA.totalHouseholdKwh, summaryB.totalHouseholdKwh, "kWh", 1, true);
+  /* Energy totals scale with days; rates and percentages already normalize themselves */
+  const energyUnit = isPerDay ? "kWh/dan" : "kWh";
+  const currencyUnit = isPerDay ? "€/dan" : "€";
+  const addEnergyRow = (label: string, a: number, b: number, invertColor = false) =>
+    addRow(label, a / divisorA, b / divisorB, energyUnit, 1, invertColor);
+
+  addEnergyRow("Solarna proizvodnja", summaryA.totalSolarProductionKwh, summaryB.totalSolarProductionKwh);
+  addEnergyRow("Predaja u mrežu", summaryA.totalFeedInKwh, summaryB.totalFeedInKwh);
+  addEnergyRow("Potrošnja iz mreže", summaryA.totalConsumedKwh, summaryB.totalConsumedKwh, true);
+  addEnergyRow("Samopotrošnja", summaryA.totalSelfConsumedKwh, summaryB.totalSelfConsumedKwh);
+  addEnergyRow("Ukupna potrošnja", summaryA.totalHouseholdKwh, summaryB.totalHouseholdKwh, true);
   addRow("Samodovoljnost", summaryA.selfSufficiencyPercent, summaryB.selfSufficiencyPercent, "%");
   addRow("Samopotrošnja %", summaryA.selfConsumptionRatePercent, summaryB.selfConsumptionRatePercent, "%");
+  addRow("Analiziranih dana", summaryA.analyzedDays, summaryB.analyzedDays, "", 0);
 
   if (summaryA.billTotalEur > 0 || summaryB.billTotalEur > 0) {
-    addRow("Račun", summaryA.billTotalEur, summaryB.billTotalEur, "€", 2, true);
-    addRow("Ušteda", summaryA.savingsEur, summaryB.savingsEur, "€", 2);
+    addRow("Račun", summaryA.billTotalEur / divisorA, summaryB.billTotalEur / divisorB, currencyUnit, 2, true);
+    addRow("Ušteda", summaryA.savingsEur / divisorA, summaryB.savingsEur / divisorB, currencyUnit, 2);
   }
 
   return rows;
@@ -84,6 +100,7 @@ export default function MonthComparison({ config, cacheRevision }: MonthComparis
   const [summaryB, setSummaryB] = useState<MonthSummary | null>(null);
   const [derivedA, setDerivedA] = useState<DerivedMonthlyData | null>(null);
   const [derivedB, setDerivedB] = useState<DerivedMonthlyData | null>(null);
+  const [isPerDay, setIsPerDay] = useState(false);
 
   /* Load available cached months */
   useEffect(() => {
@@ -107,11 +124,18 @@ export default function MonthComparison({ config, cacheRevision }: MonthComparis
 
   /* Load month A data */
   useEffect(() => {
-    if (!monthKeyA) { setSummaryA(null); setDerivedA(null); return; }
     let cancelled = false;
     async function load() {
-      const cached = await getCachedMonth(monthKeyA);
-      if (cancelled || !cached) return;
+      /* Clearing happens inside the async body so no state is set synchronously
+         in the effect, and a month with no cache clears the previous selection
+         instead of leaving its numbers on screen. */
+      const cached = monthKeyA ? await getCachedMonth(monthKeyA) : null;
+      if (cancelled) return;
+      if (!cached) {
+        setSummaryA(null);
+        setDerivedA(null);
+        return;
+      }
       setSummaryA(computeMonthSummary(cached, config));
       const fusionSolarDaily = cached.fusionSolarDaily || {};
       setDerivedA(calculateDerivedMetrics(cached.sortedDays, cached.dailyData, fusionSolarDaily, cached.hasFusionSolar));
@@ -122,11 +146,18 @@ export default function MonthComparison({ config, cacheRevision }: MonthComparis
 
   /* Load month B data */
   useEffect(() => {
-    if (!monthKeyB) { setSummaryB(null); setDerivedB(null); return; }
     let cancelled = false;
     async function load() {
-      const cached = await getCachedMonth(monthKeyB);
-      if (cancelled || !cached) return;
+      /* Clearing happens inside the async body so no state is set synchronously
+         in the effect, and a month with no cache clears the previous selection
+         instead of leaving its numbers on screen. */
+      const cached = monthKeyB ? await getCachedMonth(monthKeyB) : null;
+      if (cancelled) return;
+      if (!cached) {
+        setSummaryB(null);
+        setDerivedB(null);
+        return;
+      }
       setSummaryB(computeMonthSummary(cached, config));
       const fusionSolarDaily = cached.fusionSolarDaily || {};
       setDerivedB(calculateDerivedMetrics(cached.sortedDays, cached.dailyData, fusionSolarDaily, cached.hasFusionSolar));
@@ -136,7 +167,43 @@ export default function MonthComparison({ config, cacheRevision }: MonthComparis
   }, [monthKeyB, config]);
 
   const hasComparison = summaryA && summaryB;
-  const comparisonRows = hasComparison ? buildComparisonRows(summaryA, summaryB) : [];
+  const comparisonRows = hasComparison ? buildComparisonRows(summaryA, summaryB, isPerDay) : [];
+
+  /* Headline deltas must use the same basis as the table, or the cards would
+     still credit an extra calendar day while the table below discounts it. */
+  const cardDivisorA = isPerDay && summaryA ? Math.max(summaryA.analyzedDays, 1) : 1;
+  const cardDivisorB = isPerDay && summaryB ? Math.max(summaryB.analyzedDays, 1) : 1;
+  const cardEnergyUnit = isPerDay ? "kWh/dan" : "kWh";
+  const cardCurrencyUnit = isPerDay ? "€/dan" : "€";
+
+  const summaryDeltaCards = hasComparison ? [
+    {
+      label: "Proizvodnja Δ",
+      delta: formatDelta(summaryA.totalSolarProductionKwh / cardDivisorA, summaryB.totalSolarProductionKwh / cardDivisorB, cardEnergyUnit),
+    },
+    {
+      label: "Potrošnja Δ",
+      delta: formatDelta(summaryA.totalConsumedKwh / cardDivisorA, summaryB.totalConsumedKwh / cardDivisorB, cardEnergyUnit, true),
+    },
+    {
+      label: "Samodovoljnost Δ",
+      delta: formatDelta(summaryA.selfSufficiencyPercent, summaryB.selfSufficiencyPercent, "%"),
+    },
+    {
+      label: "Ušteda Δ",
+      delta: formatDelta(summaryA.savingsEur / cardDivisorA, summaryB.savingsEur / cardDivisorB, cardCurrencyUnit),
+    },
+  ] : [];
+
+  /* Warn when the two months have different lengths and per-day mode is off,
+     because part of the delta is then just the extra days. */
+  const hasDifferentLengths = hasComparison && summaryA.analyzedDays !== summaryB.analyzedDays;
+  const normalizationNote = hasDifferentLengths && !isPerDay ? (
+    <p className="font-mono text-[0.6rem] text-amber mb-4">
+      Mjeseci imaju različit broj dana ({summaryA.analyzedDays} vs {summaryB.analyzedDays}) — dio razlike
+      dolazi samo od toga. Uključite &bdquo;Po danu&ldquo; za pravednu usporedbu.
+    </p>
+  ) : null;
 
   /* Bar chart: side-by-side key metrics */
   const chartData = hasComparison ? {
@@ -250,7 +317,17 @@ export default function MonthComparison({ config, cacheRevision }: MonthComparis
             ))}
           </select>
         </div>
+        <label className="font-mono text-[0.6rem] text-text-dim uppercase tracking-wider flex items-center gap-1.5 mt-4 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={isPerDay}
+            onChange={(event) => setIsPerDay(event.target.checked)}
+          />
+          Po danu
+        </label>
       </div>
+
+      {normalizationNote}
 
       {cachedKeys.length < 2 && (
         <p className="font-mono text-xs text-text-dim">
@@ -260,32 +337,14 @@ export default function MonthComparison({ config, cacheRevision }: MonthComparis
 
       {hasComparison && (
         <>
-          {/* Summary cards — top-level delta */}
+          {/* Summary cards — top-level delta, on the same basis as the table below */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
-            <div className={cardBox}>
-              <div className={cardLabel}>Proizvodnja Δ</div>
-              <div className={`${cardValue} ${formatDelta(summaryA.totalSolarProductionKwh, summaryB.totalSolarProductionKwh, "kWh").color}`}>
-                {formatDelta(summaryA.totalSolarProductionKwh, summaryB.totalSolarProductionKwh, "kWh").text}
+            {summaryDeltaCards.map((card) => (
+              <div key={card.label} className={cardBox}>
+                <div className={cardLabel}>{card.label}</div>
+                <div className={`${cardValue} ${card.delta.color}`}>{card.delta.text}</div>
               </div>
-            </div>
-            <div className={cardBox}>
-              <div className={cardLabel}>Potrošnja Δ</div>
-              <div className={`${cardValue} ${formatDelta(summaryA.totalConsumedKwh, summaryB.totalConsumedKwh, "kWh", true).color}`}>
-                {formatDelta(summaryA.totalConsumedKwh, summaryB.totalConsumedKwh, "kWh", true).text}
-              </div>
-            </div>
-            <div className={cardBox}>
-              <div className={cardLabel}>Samodovoljnost Δ</div>
-              <div className={`${cardValue} ${formatDelta(summaryA.selfSufficiencyPercent, summaryB.selfSufficiencyPercent, "%").color}`}>
-                {formatDelta(summaryA.selfSufficiencyPercent, summaryB.selfSufficiencyPercent, "%").text}
-              </div>
-            </div>
-            <div className={cardBox}>
-              <div className={cardLabel}>Ušteda Δ</div>
-              <div className={`${cardValue} ${formatDelta(summaryA.savingsEur, summaryB.savingsEur, "€").color}`}>
-                {formatDelta(summaryA.savingsEur, summaryB.savingsEur, "€").text}
-              </div>
-            </div>
+            ))}
           </div>
 
           {/* Detailed comparison table */}
