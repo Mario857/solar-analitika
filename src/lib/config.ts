@@ -201,7 +201,9 @@ export function clearCachedTokens(): void {
   localStorage.removeItem(TOKENS_KEY);
 }
 
-export const HEP_API_BASE = "https://mjerenje.hep.hr/mjerenja/v1/api/data/omm";
+/* HEP versions this path prefix — it moved v1 -> v1.1 in Aug 2026, and the old
+   prefix now answers POST with an IIS 405 page rather than a JSON error. */
+export const HEP_API_BASE = "https://mjerenje.hep.hr/mjerenja/v1.1/api/data/omm";
 export const FUSION_SOLAR_API =
   "https://uni004eu5.fusionsolar.huawei.com/rest/pvms/web/station/v3/overview/energy-balance";
 

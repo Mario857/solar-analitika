@@ -6,6 +6,29 @@ interface LoginRequest {
 }
 
 /**
+ * HEP errors come back as {"Status":400,"Message":"Neispravni podaci prijave",...},
+ * but infrastructure failures (wrong API version, maintenance) return a full IIS
+ * HTML page. Forwarding either verbatim buries the cause in an unreadable blob.
+ */
+function extractHepErrorMessage(body: string, status: number): string {
+  try {
+    const parsed = JSON.parse(body) as { Message?: string };
+    if (parsed.Message) {
+      return parsed.Message;
+    }
+  } catch {
+    /* Not JSON — an HTML error page, handled below */
+  }
+
+  const isHtml = body.trimStart().startsWith("<");
+  if (isHtml || !body.trim()) {
+    return `HEP je odgovorio greškom ${status} (poslužitelj nije vratio poruku)`;
+  }
+
+  return body;
+}
+
+/**
  * Proxy login to HEP mjerenje portal (v4.x).
  * HEP no longer returns a Bearer token — auth is via Set-Cookie session cookies.
  * We extract those cookies and return them as a single Cookie header string that
@@ -20,7 +43,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Missing username or password" }, { status: 400 });
     }
 
-    const response = await fetch("https://mjerenje.hep.hr/mjerenja/v1/api/user/login", {
+    const response = await fetch("https://mjerenje.hep.hr/mjerenja/v1.1/api/user/login", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -33,7 +56,7 @@ export async function POST(request: NextRequest) {
     if (!response.ok) {
       const errorText = await response.text();
       return NextResponse.json(
-        { error: errorText || `Login failed: ${response.status}` },
+        { error: extractHepErrorMessage(errorText, response.status) },
         { status: response.status }
       );
     }
