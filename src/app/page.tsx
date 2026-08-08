@@ -93,6 +93,11 @@ const EMPTY_DATASET: MonthDataset = {
   hasFusionSolar: false,
 };
 
+/** A caught value is `unknown` — narrow it instead of asserting it is an Error */
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** Local "YYYY-MM-DD" — toISOString would shift the date across the UTC boundary */
 function toLocalDateKey(date: Date): string {
   const year = date.getFullYear();
@@ -143,6 +148,11 @@ export default function Home() {
   /* Store active tokens so yearly batch loading can reuse them */
   const activeHepTokenRef = useRef<string>("");
   const activeFsCookieRef = useRef<string>("");
+
+  /* Why HEP last failed (bad login, or an HTTP error from the data endpoint).
+     Without this the generic "Nema podataka" hides the real cause — e.g. when
+     HEP retired the /v1 path and every call started answering 405. */
+  const lastHepFailureMessageRef = useRef<string | null>(null);
 
   /* Track a cache revision counter so YearlyOverview can react to new cached data */
   const [cacheRevision, setCacheRevision] = useState(0);
@@ -341,12 +351,16 @@ export default function Home() {
   ): Promise<CachedMonthData | null> {
     const formattedMonth = formatMonthForApi(month);
 
+    /* A fetch that gets this far supersedes any earlier login complaint */
+    lastHepFailureMessageRef.current = null;
+
     let generationRecords: HEPMeterRecord[];
     let consumptionRecords: HEPMeterRecord[] = [];
 
     try {
       generationRecords = await fetchHEPData(hepToken, currentConfig.meter, formattedMonth, "R");
-    } catch {
+    } catch (error) {
+      lastHepFailureMessageRef.current = toErrorMessage(error);
       return null;
     }
 
@@ -411,13 +425,20 @@ export default function Home() {
         saveCachedHepToken(loginResult.token);
         /* Persist token in config so it's visible in Settings */
         saveConfig({ ...config, token: loginResult.token });
+        lastHepFailureMessageRef.current = null;
         return loginResult.token;
       }
-      setStatus({ text: `HEP prijava: ${loginResult.error || "neuspjeh"}`, cls: "err" });
+      setHepFailure(`HEP prijava: ${loginResult.error || "neuspjeh"}`);
     } catch (error) {
-      setStatus({ text: `HEP prijava: ${(error as Error).message}`, cls: "err" });
+      setHepFailure(`HEP prijava: ${toErrorMessage(error)}`);
     }
     return null;
+  }
+
+  /** Show why HEP failed and keep it, so a later fallback cannot bury the cause */
+  function setHepFailure(message: string) {
+    lastHepFailureMessageRef.current = message;
+    setStatus({ text: message, cls: "err" });
   }
 
   /** Login to FusionSolar and return a fresh cookie, or null on failure */
@@ -540,7 +561,10 @@ export default function Home() {
     }
 
     if (!cached) {
-      setStatus({ text: "Nema podataka", cls: "err" });
+      /* A recorded HEP failure is the real cause; a clean run that simply found
+         no records for the month is the only case that deserves "Nema podataka". */
+      const failureMessage = lastHepFailureMessageRef.current ?? "Nema podataka";
+      setStatus({ text: failureMessage, cls: "err" });
       setIsLoading(false);
       return;
     }
