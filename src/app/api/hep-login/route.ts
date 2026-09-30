@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { HEP_API_ROOT } from "@/lib/config";
 
 interface LoginRequest {
   username?: string;
@@ -43,7 +44,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Missing username or password" }, { status: 400 });
     }
 
-    const response = await fetch("https://mjerenje.hep.hr/mjerenja/v1.1/api/user/login", {
+    const response = await fetch(`${HEP_API_ROOT}/user/login`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
